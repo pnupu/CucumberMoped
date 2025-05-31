@@ -143,6 +143,98 @@ export interface IWorldIdService {
   generateVerificationQRCodeSVG(userId: number, action?: string): Promise<string>;
   generateVerificationQRCodeBuffer(userId: number, action?: string): Promise<Buffer>;
 }
+
+// Limit Order interfaces
+export interface LimitOrderParams {
+  makerAsset: string;      // Token being sold
+  takerAsset: string;      // Token being bought
+  maker: string;           // Wallet address of the order creator
+  receiver?: string;       // Receiver address (optional, defaults to maker)
+  makingAmount: string;    // Amount of makerAsset to sell
+  takingAmount: string;    // Amount of takerAsset to receive
+  salt?: string;           // Random salt for order uniqueness
+  extension?: string;      // Extension data (optional)
+  makerTraits?: string;    // Maker traits (optional)
+}
+
+export interface LimitOrderV4Data {
+  makerAsset: string;
+  takerAsset: string;
+  maker: string;
+  receiver: string;
+  makingAmount: string;
+  takingAmount: string;
+  salt: string;
+  extension: string;
+  makerTraits?: string;
+}
+
+export interface LimitOrderV4Request {
+  orderHash: string;
+  signature: string;
+  data: LimitOrderV4Data;
+}
+
+export interface LimitOrderV4Response {
+  success: boolean;
+}
+
+export interface LimitOrderCreationParams {
+  tokenSymbol: string;     // Token symbol (e.g., 'ETH', 'BTC')
+  tokenAddress: string;    // Token contract address
+  amount: string;          // Amount to buy/sell
+  orderType: 'BUY' | 'SELL'; // Whether buying or selling the token
+  chainId: number;         // Chain ID
+  walletAddress: string;   // User's wallet address
+  useEmaPrice?: boolean;   // Whether to use EMA price (default: true)
+  priceMultiplier?: number; // Price multiplier for limit price (default: 1.0)
+}
+
+export interface LimitOrderResult {
+  success: boolean;
+  orderId?: string;
+  orderHash?: string;
+  emaPrice?: number;
+  limitPrice?: number;
+  error?: string;
+  message?: string; // Optional message field for additional information
+}
+
+// Pyth interfaces
+export interface PythPriceData {
+  id: string;
+  price: {
+    price: string;
+    conf: string;
+    expo: number;
+    publish_time: number;
+  };
+  ema_price: {
+    price: string;
+    conf: string;
+    expo: number;
+    publish_time: number;
+  };
+}
+
+export interface IPythService {
+  getEmaPrice(tokenSymbol: string): Promise<number>;
+  getMultipleEmaPrices(tokenSymbols: string[]): Promise<Map<string, number>>;
+  getPriceUpdateData(tokenSymbol: string): Promise<string[]>;
+  isTokenSupported(tokenSymbol: string): boolean;
+  getSupportedTokens(): string[];
+  addPriceFeed(tokenSymbol: string, priceId: string): void;
+}
+
+// Extended OneInch service interface for limit orders
+export interface IOneInchServiceWithLimitOrders extends IOneInchService {
+  createLimitOrder(params: LimitOrderCreationParams, encryptedPrivateKey: string): Promise<LimitOrderResult>;
+  getLimitOrders(walletAddress: string, chainId: number): Promise<any[]>;
+  cancelLimitOrder(orderHash: string, encryptedPrivateKey: string): Promise<boolean>;
+  getSupportedPythTokens(): string[];
+  addPythPriceFeed(tokenSymbol: string, priceId: string): void;
+}
+
 // Hedera-specific types for database storage
 export interface HederaTopic {
   id: string;

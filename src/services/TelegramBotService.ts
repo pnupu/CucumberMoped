@@ -5,7 +5,7 @@ import { BlockchainService } from './BlockchainService';
 import { WorldIdService } from './WorldIdService';
 import { HederaService } from './HederaService';
 import { StrategyService } from './StrategyService';
-import { IOneInchService, OneInchQuoteParams, HederaTopic, HederaMessage } from '../types';
+import { IOneInchServiceWithLimitOrders, OneInchQuoteParams, HederaTopic, HederaMessage, LimitOrderCreationParams } from '../types';
 
 import { getTokenBySymbol, getTokensByChain, CHAIN_NAMES, SUPPORTED_TOKENS } from '../config/tokens';
 import { ethers } from 'ethers';
@@ -14,7 +14,7 @@ export class TelegramBotService {
   private bot: TelegramBot;
   private db: DatabaseService;
   private walletService: WalletService;
-  private oneInchService: IOneInchService;
+  private oneInchService: IOneInchServiceWithLimitOrders;
   private blockchainService?: BlockchainService;
   private worldIdService?: WorldIdService;
   private hederaService?: HederaService;
@@ -25,7 +25,7 @@ export class TelegramBotService {
     token: string,
     db: DatabaseService,
     walletService: WalletService,
-    oneInchService: IOneInchService,
+    oneInchService: IOneInchServiceWithLimitOrders,
     blockchainService?: BlockchainService,
     worldIdService?: WorldIdService,
     hederaService?: HederaService,
@@ -68,6 +68,14 @@ export class TelegramBotService {
       { command: 'balance', description: 'Show token balances' },
       { command: 'buy', description: 'Buy tokens (e.g. /buy 100 USDC ETH)' },
       { command: 'sell', description: 'Sell tokens (e.g. /sell 0.1 ETH USDC)' },
+      { command: 'limitbuy', description: 'Create limit buy order (e.g. /limitbuy 1 ETH)' },
+      { command: 'limitsell', description: 'Create limit sell order (e.g. /limitsell 1 ETH)' },
+      { command: 'limitorders', description: 'View your active limit orders' },
+      { command: 'cancellimit', description: 'Cancel a limit order' },
+      { command: 'pythprice', description: 'Get EMA price from Pyth (e.g. /pythprice ETH)' },
+      { command: 'pythtest', description: 'Test Pyth service with all supported tokens' },
+      { command: 'pythall', description: 'Get all Pyth EMA prices at once' },
+      { command: 'pythcompare', description: 'Compare Pyth prices over time' },
       { command: 'quote', description: 'Get price quote with instant buy option' },
       { command: 'orders', description: 'Check active/recent orders' },
       { command: 'status', description: 'Check specific order status' },
@@ -755,6 +763,535 @@ Ready to verify? 🚀`;
       }
     });
 
+    // Limit Buy command
+    this.bot.onText(/\/limitbuy (.+)/, async (msg, match) => {
+      const chatId = msg.chat.id;
+      const userId = msg.from?.id;
+      const input = match?.[1];
+
+      if (!userId || !input) return;
+
+      try {
+        const user = await this.db.getUser(userId);
+        if (!user) {
+          this.bot.sendMessage(chatId, 'You are not registered yet. Use /start to begin.');
+          return;
+        }
+
+        // Check World ID verification
+        const isVerificationPassed = await checkWorldIdVerification(userId, chatId);
+        if (!isVerificationPassed) {
+          return;
+        }
+
+        const parts = input.split(' ');
+        if (parts.length !== 2) {
+          this.bot.sendMessage(chatId, 
+            'Invalid command format. Use:\n' +
+            '• `/limitbuy 1 ETH` - Create limit buy order for 1 ETH at Pyth EMA price\n' +
+            '• `/limitbuy 0.5 BTC` - Create limit buy order for 0.5 BTC at Pyth EMA price\n\n' +
+            '💡 Orders use USDC and Pyth Network EMA pricing'
+          );
+          return;
+        }
+
+        const [amount, tokenSymbol] = parts;
+        const chainId = 8453; // Default to Base
+
+        // Get token information
+        const token = getTokenBySymbol(tokenSymbol.toUpperCase(), chainId);
+        if (!token) {
+          this.bot.sendMessage(chatId, 
+            `❌ Token ${tokenSymbol.toUpperCase()} not found on Base network.\n\n` +
+            `Supported Pyth tokens: ${this.oneInchService.getSupportedPythTokens().join(', ')}`
+          );
+          return;
+        }
+
+        // Check if token is supported by Pyth
+        if (!this.oneInchService.getSupportedPythTokens().includes(tokenSymbol.toUpperCase())) {
+          this.bot.sendMessage(chatId, 
+            `❌ ${tokenSymbol.toUpperCase()} is not supported by Pyth Network.\n\n` +
+            `Supported tokens: ${this.oneInchService.getSupportedPythTokens().join(', ')}`
+          );
+          return;
+        }
+
+        this.bot.sendMessage(chatId, `🎯 Creating limit buy order for ${amount} ${tokenSymbol.toUpperCase()}...`);
+
+        // Create limit order
+        const limitOrderParams: LimitOrderCreationParams = {
+          tokenSymbol: tokenSymbol.toUpperCase(),
+          tokenAddress: token.address,
+          amount: amount,
+          orderType: 'BUY',
+          chainId: chainId,
+          walletAddress: user.walletAddress,
+          useEmaPrice: true,
+          priceMultiplier: 1.0
+        };
+
+        const result = await this.oneInchService.createLimitOrder(limitOrderParams, user.encryptedPrivateKey);
+
+        if (result.success) {
+          this.bot.sendMessage(chatId,
+            `✅ **Limit Buy Order Created!**\n\n` +
+            `📊 **Order Details:**\n` +
+            `• Token: ${tokenSymbol.toUpperCase()}\n` +
+            `• Amount: ${amount} ${tokenSymbol.toUpperCase()}\n` +
+            `• Type: BUY\n` +
+            `• EMA Price: $${result.emaPrice?.toFixed(6)}\n` +
+            `• Limit Price: $${result.limitPrice?.toFixed(6)}\n` +
+            `• Order ID: \`${result.orderId}\`\n\n` +
+            `🔗 Your order is now live on 1inch Orderbook!`,
+            { parse_mode: 'Markdown' }
+          );
+        } else {
+          this.bot.sendMessage(chatId, `❌ Failed to create limit order: ${result.error}`);
+        }
+
+      } catch (error) {
+        console.error('Error in limitbuy command:', error);
+        this.bot.sendMessage(chatId, 'Error creating limit buy order. Please try again.');
+      }
+    });
+
+    // Limit Sell command
+    this.bot.onText(/\/limitsell (.+)/, async (msg, match) => {
+      const chatId = msg.chat.id;
+      const userId = msg.from?.id;
+      const input = match?.[1];
+
+      if (!userId || !input) return;
+
+      try {
+        const user = await this.db.getUser(userId);
+        if (!user) {
+          this.bot.sendMessage(chatId, 'You are not registered yet. Use /start to begin.');
+          return;
+        }
+
+        // Check World ID verification
+        const isVerificationPassed = await checkWorldIdVerification(userId, chatId);
+        if (!isVerificationPassed) {
+          return;
+        }
+
+        const parts = input.split(' ');
+        if (parts.length !== 2) {
+          this.bot.sendMessage(chatId, 
+            'Invalid command format. Use:\n' +
+            '• `/limitsell 1 ETH` - Create limit sell order for 1 ETH at Pyth EMA price\n' +
+            '• `/limitsell 0.5 BTC` - Create limit sell order for 0.5 BTC at Pyth EMA price\n\n' +
+            '💡 Orders sell for USDC using Pyth Network EMA pricing'
+          );
+          return;
+        }
+
+        const [amount, tokenSymbol] = parts;
+        const chainId = 8453; // Default to Base
+
+        // Get token information
+        const token = getTokenBySymbol(tokenSymbol.toUpperCase(), chainId);
+        if (!token) {
+          this.bot.sendMessage(chatId, 
+            `❌ Token ${tokenSymbol.toUpperCase()} not found on Base network.\n\n` +
+            `Supported Pyth tokens: ${this.oneInchService.getSupportedPythTokens().join(', ')}`
+          );
+          return;
+        }
+
+        // Check if token is supported by Pyth
+        if (!this.oneInchService.getSupportedPythTokens().includes(tokenSymbol.toUpperCase())) {
+          this.bot.sendMessage(chatId, 
+            `❌ ${tokenSymbol.toUpperCase()} is not supported by Pyth Network.\n\n` +
+            `Supported tokens: ${this.oneInchService.getSupportedPythTokens().join(', ')}`
+          );
+          return;
+        }
+
+        this.bot.sendMessage(chatId, `🎯 Creating limit sell order for ${amount} ${tokenSymbol.toUpperCase()}...`);
+
+        // Create limit order
+        const limitOrderParams: LimitOrderCreationParams = {
+          tokenSymbol: tokenSymbol.toUpperCase(),
+          tokenAddress: token.address,
+          amount: amount,
+          orderType: 'SELL',
+          chainId: chainId,
+          walletAddress: user.walletAddress,
+          useEmaPrice: true,
+          priceMultiplier: 1.0
+        };
+
+        const result = await this.oneInchService.createLimitOrder(limitOrderParams, user.encryptedPrivateKey);
+
+        if (result.success) {
+          this.bot.sendMessage(chatId,
+            `✅ **Limit Sell Order Created!**\n\n` +
+            `📊 **Order Details:**\n` +
+            `• Token: ${tokenSymbol.toUpperCase()}\n` +
+            `• Amount: ${amount} ${tokenSymbol.toUpperCase()}\n` +
+            `• Type: SELL\n` +
+            `• EMA Price: $${result.emaPrice?.toFixed(6)}\n` +
+            `• Limit Price: $${result.limitPrice?.toFixed(6)}\n` +
+            `• Order ID: \`${result.orderId}\`\n\n` +
+            `🔗 Your order is now live on 1inch Orderbook!`,
+            { parse_mode: 'Markdown' }
+          );
+        } else {
+          this.bot.sendMessage(chatId, `❌ Failed to create limit order: ${result.error}`);
+        }
+
+      } catch (error) {
+        console.error('Error in limitsell command:', error);
+        this.bot.sendMessage(chatId, 'Error creating limit sell order. Please try again.');
+      }
+    });
+
+    // Pyth Price command
+    this.bot.onText(/\/pythprice (.+)/, async (msg, match) => {
+      const chatId = msg.chat.id;
+      const userId = msg.from?.id;
+      const tokenSymbol = match?.[1]?.trim();
+
+      if (!userId || !tokenSymbol) return;
+
+      try {
+        const user = await this.db.getUser(userId);
+        if (!user) {
+          this.bot.sendMessage(chatId, 'You are not registered yet. Use /start to begin.');
+          return;
+        }
+
+        // Check if token is supported by Pyth
+        if (!this.oneInchService.getSupportedPythTokens().includes(tokenSymbol.toUpperCase())) {
+          this.bot.sendMessage(chatId, 
+            `❌ ${tokenSymbol.toUpperCase()} is not supported by Pyth Network.\n\n` +
+            `Supported tokens: ${this.oneInchService.getSupportedPythTokens().join(', ')}`
+          );
+          return;
+        }
+
+        this.bot.sendMessage(chatId, `📊 Fetching Pyth EMA price for ${tokenSymbol.toUpperCase()}...`);
+
+        // Get the service cast to the limit order interface to access Pyth methods
+        const limitOrderService = this.oneInchService as any;
+        const pythService = limitOrderService.pythService;
+        
+        if (!pythService) {
+          this.bot.sendMessage(chatId, '❌ Pyth service not available.');
+          return;
+        }
+
+        const emaPrice = await pythService.getEmaPrice(tokenSymbol.toUpperCase());
+
+        this.bot.sendMessage(chatId,
+          `📊 **Pyth Network EMA Price**\n\n` +
+          `🪙 **Token:** ${tokenSymbol.toUpperCase()}\n` +
+          `💰 **EMA Price:** $${emaPrice.toFixed(6)}\n\n` +
+          `📈 *Price from Pyth Network Hermes*\n` +
+          `⏰ *Real-time exponential moving average*`,
+          { parse_mode: 'Markdown' }
+        );
+
+      } catch (error) {
+        console.error('Error in pythprice command:', error);
+        this.bot.sendMessage(chatId, `❌ Error fetching Pyth price: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+    });
+
+    // Pyth Test command - test all supported tokens
+    this.bot.onText(/\/pythtest/, async (msg) => {
+      const chatId = msg.chat.id;
+      const userId = msg.from?.id;
+
+      if (!userId) return;
+
+      try {
+        const user = await this.db.getUser(userId);
+        if (!user) {
+          this.bot.sendMessage(chatId, 'You are not registered yet. Use /start to begin.');
+          return;
+        }
+
+        this.bot.sendMessage(chatId, '🧪 **Testing Pyth Service with all supported tokens...**');
+
+        // Get the Pyth service
+        const limitOrderService = this.oneInchService as any;
+        const pythService = limitOrderService.pythService;
+        
+        if (!pythService) {
+          this.bot.sendMessage(chatId, '❌ Pyth service not available.');
+          return;
+        }
+
+        const supportedTokens = pythService.getSupportedTokens();
+        let results = `🧪 **Pyth Service Test Results**\n\n`;
+        results += `📋 **Supported tokens:** ${supportedTokens.length}\n\n`;
+
+        for (const token of supportedTokens) {
+          try {
+            const price = await pythService.getEmaPrice(token);
+            results += `✅ **${token}:** $${price.toFixed(6)}\n`;
+          } catch (error) {
+            results += `❌ **${token}:** Error - ${error instanceof Error ? error.message : 'Unknown'}\n`;
+          }
+        }
+
+        results += `\n🎉 **Test completed!**`;
+        this.bot.sendMessage(chatId, results, { parse_mode: 'Markdown' });
+
+      } catch (error) {
+        console.error('Error in pythtest command:', error);
+        this.bot.sendMessage(chatId, `❌ Error running Pyth test: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+    });
+
+    // Pyth All command - get all prices at once
+    this.bot.onText(/\/pythall/, async (msg) => {
+      const chatId = msg.chat.id;
+      const userId = msg.from?.id;
+
+      if (!userId) return;
+
+      try {
+        const user = await this.db.getUser(userId);
+        if (!user) {
+          this.bot.sendMessage(chatId, 'You are not registered yet. Use /start to begin.');
+          return;
+        }
+
+        this.bot.sendMessage(chatId, '📊 **Fetching all Pyth EMA prices...**');
+
+        // Get the Pyth service
+        const limitOrderService = this.oneInchService as any;
+        const pythService = limitOrderService.pythService;
+        
+        if (!pythService) {
+          this.bot.sendMessage(chatId, '❌ Pyth service not available.');
+          return;
+        }
+
+        const supportedTokens = pythService.getSupportedTokens();
+        const prices = await pythService.getMultipleEmaPrices(supportedTokens);
+
+        let priceList = `📊 **All Pyth EMA Prices**\n\n`;
+        priceList += `⏰ **Fetched:** ${new Date().toLocaleString()}\n\n`;
+
+        prices.forEach((price: number, token: string) => {
+          const icon = token === 'BTC' ? '₿' : 
+                     token === 'ETH' ? '⚡' : 
+                     token === 'USDC' ? '💰' : 
+                     token === 'USDT' ? '💵' : '🪙';
+          priceList += `${icon} **${token}:** $${price.toFixed(6)}\n`;
+        });
+
+        priceList += `\n💡 **Tip:** Use \`/pythprice [token]\` for individual prices`;
+
+        this.bot.sendMessage(chatId, priceList, { parse_mode: 'Markdown' });
+
+      } catch (error) {
+        console.error('Error in pythall command:', error);
+        this.bot.sendMessage(chatId, `❌ Error fetching all Pyth prices: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+    });
+
+    // Pyth Compare command - compare prices over time
+    this.bot.onText(/\/pythcompare/, async (msg) => {
+      const chatId = msg.chat.id;
+      const userId = msg.from?.id;
+
+      if (!userId) return;
+
+      try {
+        const user = await this.db.getUser(userId);
+        if (!user) {
+          this.bot.sendMessage(chatId, 'You are not registered yet. Use /start to begin.');
+          return;
+        }
+
+        this.bot.sendMessage(chatId, '📊 **Comparing Pyth prices over time...**');
+
+        // Get the Pyth service
+        const limitOrderService = this.oneInchService as any;
+        const pythService = limitOrderService.pythService;
+        
+        if (!pythService) {
+          this.bot.sendMessage(chatId, '❌ Pyth service not available.');
+          return;
+        }
+
+        const supportedTokens = pythService.getSupportedTokens();
+        let comparison = `📊 **Pyth Price Comparison**\n\n`;
+
+        // Get initial prices
+        const initialPrices = await pythService.getMultipleEmaPrices(supportedTokens);
+        comparison += `⏰ **Initial fetch:** ${new Date().toLocaleString()}\n\n`;
+
+        for (const [token, price] of initialPrices) {
+          comparison += `${token}: $${price.toFixed(6)}\n`;
+        }
+
+        this.bot.sendMessage(chatId, comparison + '\n⏳ **Waiting 10 seconds for second fetch...**', { parse_mode: 'Markdown' });
+
+        // Wait 10 seconds
+        await new Promise(resolve => setTimeout(resolve, 10000));
+
+        // Get second prices
+        const secondPrices = await pythService.getMultipleEmaPrices(supportedTokens);
+        
+        let finalComparison = `📊 **Pyth Price Comparison Results**\n\n`;
+        finalComparison += `⏰ **Second fetch:** ${new Date().toLocaleString()}\n\n`;
+
+        for (const [token, secondPrice] of secondPrices) {
+          const initialPrice = initialPrices.get(token) || 0;
+          const change = secondPrice - initialPrice;
+          const changePercent = initialPrice > 0 ? ((change / initialPrice) * 100) : 0;
+          
+          const arrow = change > 0 ? '📈' : change < 0 ? '📉' : '➡️';
+          const sign = change > 0 ? '+' : '';
+          
+          finalComparison += `${arrow} **${token}:**\n`;
+          finalComparison += `  Initial: $${initialPrice.toFixed(6)}\n`;
+          finalComparison += `  Current: $${secondPrice.toFixed(6)}\n`;
+          finalComparison += `  Change: ${sign}$${change.toFixed(6)} (${sign}${changePercent.toFixed(4)}%)\n\n`;
+        }
+
+        finalComparison += `💡 **Note:** Small changes are normal for EMA prices`;
+
+        this.bot.sendMessage(chatId, finalComparison, { parse_mode: 'Markdown' });
+
+      } catch (error) {
+        console.error('Error in pythcompare command:', error);
+        this.bot.sendMessage(chatId, `❌ Error comparing Pyth prices: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+    });
+
+    // Limit Orders command
+    this.bot.onText(/\/limitorders/, async (msg) => {
+      const chatId = msg.chat.id;
+      const userId = msg.from?.id;
+
+      if (!userId) return;
+
+      try {
+        const user = await this.db.getUser(userId);
+        if (!user) {
+          this.bot.sendMessage(chatId, 'You are not registered yet. Use /start to begin.');
+          return;
+        }
+
+        // Check World ID verification
+        const isVerificationPassed = await checkWorldIdVerification(userId, chatId);
+        if (!isVerificationPassed) {
+          return;
+        }
+
+        this.bot.sendMessage(chatId, '📋 Fetching your active limit orders...');
+
+        const chainId = 8453; // Base network
+        const orders = await this.oneInchService.getLimitOrders(user.walletAddress, chainId);
+
+        if (orders.length === 0) {
+          this.bot.sendMessage(chatId, 
+            '📭 **No Active Limit Orders**\n\n' +
+            'You don\'t have any active limit orders.\n\n' +
+            '**Create orders with:**\n' +
+            '• `/limitbuy 1 ETH` - Buy ETH at EMA price\n' +
+            '• `/limitsell 1 ETH` - Sell ETH at EMA price'
+          );
+          return;
+        }
+
+        let orderList = `📋 **Your Active Limit Orders** (${orders.length})\n\n`;
+        
+        orders.forEach((order, index) => {
+          const orderId = order.hash || order.orderId || 'N/A';
+          const shortOrderId = orderId !== 'N/A' ? orderId.substring(0, 10) + '...' : 'N/A';
+          
+          orderList += `**${index + 1}.** Order ID: \`${shortOrderId}\`\n`;
+          orderList += `• Token: ${order.tokenSymbol || 'Unknown'}\n`;
+          orderList += `• Amount: ${order.amount || 'N/A'} ${order.tokenSymbol || ''}\n`;
+          orderList += `• Type: ${order.orderType || 'Unknown'}\n`;
+          orderList += `• EMA Price: $${order.emaPrice ? order.emaPrice.toFixed(6) : 'N/A'}\n`;
+          orderList += `• Limit Price: $${order.limitPrice ? order.limitPrice.toFixed(6) : 'N/A'}\n`;
+          orderList += `• Status: Active\n`;
+          orderList += `• Created: ${order.createdAt ? new Date(order.createdAt).toLocaleString() : 'N/A'}\n`;
+          orderList += `• Full ID: \`${orderId}\`\n\n`;
+        });
+
+        orderList += '\n💡 Use `/cancellimit [order_id]` to cancel an order';
+
+        this.bot.sendMessage(chatId, orderList, { parse_mode: 'Markdown' });
+
+      } catch (error) {
+        console.error('Error in limitorders command:', error);
+        this.bot.sendMessage(chatId, 'Error fetching limit orders. Please try again.');
+      }
+    });
+
+    // Cancel limit order command
+    this.bot.onText(/\/cancellimit (.+)/, async (msg, match) => {
+      const chatId = msg.chat.id;
+      const userId = msg.from?.id;
+
+      if (!userId || !match) return;
+
+      try {
+        // Check World ID verification
+        const isVerificationPassed = await checkWorldIdVerification(userId, chatId);
+        if (!isVerificationPassed) {
+          return;
+        }
+
+        const orderHash = match[1].trim();
+        
+        if (!orderHash) {
+          this.bot.sendMessage(chatId, 
+            '❌ **Invalid Command Format**\n\n' +
+            '**Usage:** `/cancellimit [order_id]`\n\n' +
+            '**Example:** `/cancellimit 0x27a7790747...`\n\n' +
+            '💡 Use `/limitorders` to see your active orders and their IDs.'
+          );
+          return;
+        }
+
+        const user = await this.db.getUser(userId);
+        if (!user) {
+          this.bot.sendMessage(chatId, 'You are not registered yet. Use /start to begin.');
+          return;
+        }
+
+        this.bot.sendMessage(chatId, `🗑️ Cancelling limit order ${orderHash.substring(0, 10)}...`);
+
+        // Cancel the limit order
+        const cancelled = await this.oneInchService.cancelLimitOrder(orderHash, user.encryptedPrivateKey);
+
+        if (cancelled) {
+          this.bot.sendMessage(chatId, 
+            '✅ **Limit Order Cancelled!**\n\n' +
+            `📝 Order ID: \`${orderHash.substring(0, 10)}...\`\n\n` +
+            '💡 Use `/limitorders` to view your remaining active orders.'
+          );
+        } else {
+          this.bot.sendMessage(chatId, 
+            '❌ **Failed to Cancel Order**\n\n' +
+            `Order \`${orderHash.substring(0, 10)}...\` could not be cancelled.\n\n` +
+            '**Possible reasons:**\n' +
+            '• Order ID not found\n' +
+            '• Order already executed or expired\n' +
+            '• Network error\n\n' +
+            '💡 Use `/limitorders` to check your active orders.'
+          );
+        }
+
+      } catch (error) {
+        console.error('Error in cancellimit command:', error);
+        this.bot.sendMessage(chatId, 'Error cancelling limit order. Please try again.');
+      }
+    });
+
     // Tokens command
     this.bot.onText(/\/tokens/, (msg) => {
       const chatId = msg.chat.id;
@@ -800,6 +1337,23 @@ This bot requires proof of humanhood to prevent abuse and ensure fair access for
 /balance - Show token balances
 /orders - Check active/recent orders
 /status [order_id] - Check specific order status
+
+**🎯 Limit Orders (NEW!):**
+/limitbuy [amount] [token] - Create limit buy order at Pyth EMA price
+/limitsell [amount] [token] - Create limit sell order at Pyth EMA price
+/limitorders - View your active limit orders
+/cancellimit [order_id] - Cancel a limit order
+
+**📊 Pyth Network Integration:**
+/pythprice [token] - Get real-time EMA price from Pyth Network
+• Supported tokens: BTC, ETH, USDC, USDT
+• Powers limit order pricing
+• 24/7 real-time price feeds
+
+**🧪 Pyth Testing Commands:**
+/pythtest - Test Pyth service with all supported tokens
+/pythall - Get all Pyth EMA prices at once
+/pythcompare - Compare Pyth prices over 10 seconds
 
 **Wallet & Info:**
 /wallet - Show wallet information

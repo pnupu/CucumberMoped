@@ -9,7 +9,7 @@ export class OneInchService implements IOneInchService {
   private crossChainSDK: SDK;
   private fusionSDKs: Map<number, FusionSDK> = new Map();
   private walletService: WalletService;
-  private apiKey: string;
+  protected apiKey: string;
 
   constructor(apiUrl: string, authKey: string, walletService: WalletService) {
     // Cross-chain SDK for cross-chain swaps

@@ -2,6 +2,8 @@ import dotenv from 'dotenv';
 import { DatabaseService } from './services/DatabaseService';
 import { WalletService } from './services/WalletService';
 import { OneInchService } from './services/OneInchService';
+import { OneInchLimitOrderService } from './services/OneInchLimitOrderService';
+import { PythService } from './services/PythService';
 import { BlockchainService } from './services/BlockchainService';
 import { TelegramBotService } from './services/TelegramBotService';
 import { WorldIdService } from './services/WorldIdService';
@@ -17,6 +19,8 @@ class TradingBotApp {
   private walletService: WalletService;
   private blockchainService: BlockchainService;
   private oneInchService: OneInchService;
+  private oneInchLimitOrderService: OneInchLimitOrderService;
+  private pythService: PythService;
   private telegramBot: TelegramBotService;
   private worldIdService: WorldIdService;
   private miniAppServer: MiniAppServer;
@@ -27,6 +31,7 @@ class TradingBotApp {
     console.log('🚀 Starting Mainnet Trading Bot with Telegram Mini App...');
     console.log('💰 Primary token: USDC on Base');
     console.log('🌍 World ID verification enabled via Mini App');
+    console.log('🎯 Limit orders with Pyth EMA pricing enabled');
     
     // Validate required environment variables
     this.validateEnvironment();
@@ -40,10 +45,22 @@ class TradingBotApp {
       this.db,
       'identity-verification' // Match the action from your World ID app settings
     );
+
+    // Initialize Pyth service
+    this.pythService = new PythService();
+
+    // Initialize OneInch services
     this.oneInchService = new OneInchService(
       process.env.ONEINCH_API_URL!,
       process.env.ONEINCH_API_KEY!,
       this.walletService
+    );
+
+    this.oneInchLimitOrderService = new OneInchLimitOrderService(
+      process.env.ONEINCH_API_URL!,
+      process.env.ONEINCH_API_KEY!,
+      this.walletService,
+      this.pythService
     );
 
     // Initialize Hedera service
@@ -60,7 +77,7 @@ class TradingBotApp {
       process.env.TELEGRAM_BOT_TOKEN!,
       this.db,
       this.walletService,
-      this.oneInchService,
+      this.oneInchLimitOrderService, // Use the limit order service instead of regular OneInch service
       this.blockchainService,
       this.worldIdService,
       this.hederaService,
