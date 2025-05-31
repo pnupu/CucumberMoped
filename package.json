@@ -13,7 +13,8 @@
     "clean": "rm -rf dist",
     "rebuild": "npm run clean && npm run build",
     "type-check": "tsc --noEmit",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "test:hedera": "ts-node src/test-hedera.ts"
   },
   "keywords": [
     "telegram",
@@ -28,6 +29,7 @@
   "dependencies": {
     "@1inch/cross-chain-sdk": "0.1.15-rc.0",
     "@blockscout/app-sdk": "^0.1.0",
+    "@hashgraph/sdk": "^2.48.1",
     "axios": "^1.6.2",
     "bcrypt": "^5.1.1",
     "dotenv": "^16.3.1",

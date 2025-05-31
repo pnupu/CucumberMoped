@@ -4,7 +4,7 @@ import { WalletService } from './services/WalletService';
 import { OneInchService } from './services/OneInchService';
 import { BlockchainService } from './services/BlockchainService';
 import { TelegramBotService } from './services/TelegramBotService';
-
+import { MockHederaService } from './services/MockHederaService';
 // Load environment variables
 dotenv.config();
 
@@ -14,6 +14,7 @@ class TradingBotApp {
   private blockchainService: BlockchainService;
   private oneInchService: OneInchService;
   private telegramBot: TelegramBotService;
+  private hederaService: MockHederaService;
 
   constructor() {
     console.log('🚀 Starting Mainnet Trading Bot...');
@@ -38,6 +39,7 @@ class TradingBotApp {
       this.oneInchService,
       this.blockchainService
     );
+    this.hederaService = new MockHederaService(true);
   }
 
   private validateEnvironment(): void {
@@ -45,7 +47,9 @@ class TradingBotApp {
       'TELEGRAM_BOT_TOKEN',
       'ONEINCH_API_KEY',
       'ONEINCH_API_URL',
-      'WALLET_ENCRYPTION_KEY'
+      'WALLET_ENCRYPTION_KEY',
+      'HEDERA_TESTNET_ACCOUNT_ID',
+      'HEDERA_TESTNET_PRIVATE_KEY'
     ];
 
     const missing = requiredVars.filter(varName => !process.env[varName]);
