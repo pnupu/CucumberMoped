@@ -112,6 +112,7 @@ export interface IOneInchService {
   isValidTokenAddress(address: string): boolean;
 }
 
+
 // World ID interfaces
 export interface WorldIdVerificationParams {
   action: string;
@@ -141,4 +142,24 @@ export interface IWorldIdService {
   generateVerificationQRCodeBase64(userId: number, action?: string): Promise<string>;
   generateVerificationQRCodeSVG(userId: number, action?: string): Promise<string>;
   generateVerificationQRCodeBuffer(userId: number, action?: string): Promise<Buffer>;
+// Hedera-specific types for database storage
+export interface HederaTopic {
+  id: string;
+  topicId: string; // Hedera topic ID (e.g., "0.0.1234")
+  memo: string;
+  userId: number; // Foreign key to users table
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface HederaMessage {
+  id: string;
+  topicId: string; // Hedera topic ID (e.g., "0.0.1234")
+  sequenceNumber: number;
+  message: string;
+  userId: number; // Foreign key to users table
+  consensusTimestamp?: Date;
+  runningHash?: string;
+  createdAt: Date;
+  updatedAt: Date;
 } 

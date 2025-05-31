@@ -13,7 +13,9 @@
     "clean": "rm -rf dist",
     "rebuild": "npm run clean && npm run build",
     "type-check": "tsc --noEmit",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "test:hedera": "ts-node src/test-hedera.ts",
+    "test:hedera-real": "ts-node src/test-hedera-real.ts"
   },
   "keywords": [
     "telegram",
@@ -33,6 +35,7 @@
     "@worldcoin/idkit": "^1.3.0",
     "@worldcoin/idkit-standalone": "^2.1.0",
     "@worldcoin/minikit-js": "^1.0.0",
+    "@hashgraph/sdk": "^2.48.1",
     "axios": "^1.6.2",
     "bcrypt": "^5.1.1",
     "cors": "^2.8.5",

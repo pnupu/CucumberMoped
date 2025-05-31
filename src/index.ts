@@ -7,6 +7,7 @@ import { TelegramBotService } from './services/TelegramBotService';
 import { WorldIdService } from './services/WorldIdService';
 import { MiniAppServer } from './server/miniapp-server';
 
+import { MockHederaService } from './services/MockHederaService';
 // Load environment variables
 dotenv.config();
 
@@ -18,6 +19,7 @@ class TradingBotApp {
   private telegramBot: TelegramBotService;
   private worldIdService: WorldIdService;
   private miniAppServer: MiniAppServer;
+  private hederaService: MockHederaService;
 
   constructor() {
     console.log('🚀 Starting Mainnet Trading Bot with Telegram Mini App...');
@@ -52,6 +54,7 @@ class TradingBotApp {
     
     // Initialize Mini App server
     this.miniAppServer = new MiniAppServer(this.db, this.worldIdService);
+    this.hederaService = new MockHederaService(true);
   }
 
   private validateEnvironment(): void {
@@ -61,7 +64,9 @@ class TradingBotApp {
       'ONEINCH_API_URL',
       'WALLET_ENCRYPTION_KEY',
       'WORLDID_APP_ID',
-      'MINIAPP_URL'
+      'MINIAPP_URL',
+      'HEDERA_TESTNET_ACCOUNT_ID',
+      'HEDERA_TESTNET_PRIVATE_KEY'
     ];
 
     const missing = requiredVars.filter(varName => !process.env[varName]);
