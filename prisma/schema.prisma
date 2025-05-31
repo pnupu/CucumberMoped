@@ -11,7 +11,7 @@ datasource db {
 }
 
 model User {
-  telegramId            Int       @id @map("telegram_id")
+  telegramId            BigInt    @id @map("telegram_id")
   username              String?
   walletAddress         String    @unique @map("wallet_address")
   encryptedPrivateKey   String    @map("encrypted_private_key")
@@ -34,7 +34,7 @@ model User {
 
 model TokenBalance {
   id           Int      @id @default(autoincrement())
-  userId       Int      @map("user_id")
+  userId       BigInt   @map("user_id")
   tokenAddress String   @map("token_address")
   tokenSymbol  String   @map("token_symbol")
   balance      String
@@ -50,7 +50,7 @@ model TokenBalance {
 
 model Transaction {
   id         String            @id
-  userId     Int               @map("user_id")
+  userId     BigInt            @map("user_id")
   type       TransactionType
   fromToken  String            @map("from_token")
   toToken    String            @map("to_token")
@@ -70,7 +70,7 @@ model Transaction {
 
 model TradingVolume {
   id            Int      @id @default(autoincrement())
-  userId        Int      @map("user_id")
+  userId        BigInt   @map("user_id")
   walletAddress String   @map("wallet_address")
   usdcVolume    String   @map("usdc_volume") // Stored as string to handle precise decimals
   date          DateTime @map("date") // Date for which this volume is recorded
@@ -87,7 +87,7 @@ model TradingVolume {
 
 model MeritDistribution {
   id                String   @id @default(uuid())
-  userId            Int      @map("user_id")
+  userId            BigInt   @map("user_id")
   walletAddress     String   @map("wallet_address")
   distributionId    String   @map("distribution_id") // Unique ID sent to Blockscout API
   amount            String   @map("amount") // Merit amount distributed
@@ -111,7 +111,7 @@ model HederaTopic {
   id        String   @id
   topicId   String   @unique @map("topic_id")
   memo      String
-  userId    Int      @map("user_id")
+  userId    BigInt   @map("user_id")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
 
@@ -127,7 +127,7 @@ model HederaMessage {
   topicId            String    @map("topic_id")
   sequenceNumber     Int       @map("sequence_number")
   message            String
-  userId             Int       @map("user_id")
+  userId             BigInt    @map("user_id")
   consensusTimestamp DateTime? @map("consensus_timestamp")
   runningHash        String?   @map("running_hash")
   createdAt          DateTime  @default(now()) @map("created_at")
