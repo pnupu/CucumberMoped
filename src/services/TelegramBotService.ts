@@ -112,7 +112,7 @@ export class TelegramBotService {
       { command: 'charts', description: 'View token price charts' },
       { command: 'history', description: 'Show transaction history' },
       { command: 'meriteligibility', description: 'Check Blockscout merit eligibility status' },
-      { command: 'testindex', description: 'Test CucumberMoped Index (Hedera + Strategy)' },
+      { command: 'blindex', description: 'Acquires data about index constructed with Black-Litterman model' },
       { command: 'ai', description: 'Chat with Hedera AI Agent (e.g. /ai What is my portfolio?)' },
       { command: 'aihelp', description: 'Get help about AI agent capabilities' },
       { command: 'help', description: 'Show help' }
@@ -164,8 +164,6 @@ export class TelegramBotService {
           `Address: \`${wallet.address}\`\n\n` +
           `⚠️ *IMPORTANT:* Save this mnemonic phrase in a secure place:\n` +
           `\`${wallet.mnemonic}\`\n\n` +
-          `🌍 **Next Step: Verify your humanity**\n` +
-          `Use /verify to verify with World ID and unlock trading features.\n\n` +
           `Use /help to see available commands.`,
           { parse_mode: 'Markdown' }
         );
@@ -334,7 +332,7 @@ Ready to verify? 🚀`;
 
           this.bot.sendMessage(chatId, 
             '🚫 **Verification Required**\n\n' +
-            'You must verify your humanity with World ID to use trading features.\n\n' +
+            'You must verify your humanity with World ID to use this feature.\n\n' +
             '**Why verification?**\n' +
             '• Prevents bot abuse\n' +
             '• Ensures fair access\n' +
@@ -1417,7 +1415,7 @@ Ready to verify? 🚀`;
 /tokens - Show supported tokens
 /history - Show transaction history
 /meriteligibility - Check Blockscout merit eligibility status (🌍 World ID required)
-/testindex - 🥒 CucumberMoped Index (Hedera + Strategy test)
+/blindex - 🥒 Black-Litterman model Index
 
 **Quick Trading Workflow:**
 1️⃣ \`/quote 10 USDC DEGEN\` - Get live price quote
@@ -1576,8 +1574,8 @@ Send \`/ai [your message]\` to chat with the AI agent.
       }
     });
 
-    // TestIndex command - CucumberMoped Index management with Hedera + Strategy
-    this.bot.onText(/\/testindex/, async (msg) => {
+    // BLIndex command - CucumberMoped Index management with Hedera + Strategy
+    this.bot.onText(/\/blindex/, async (msg) => {
       const chatId = msg.chat.id;
       const userId = msg.from?.id;
 
@@ -1601,7 +1599,7 @@ Send \`/ai [your message]\` to chat with the AI agent.
 
         const TESTNET_TOPIC_ID = '0.0.6089779';
         
-        this.bot.sendMessage(chatId, '🥒 CucumberMoped Index Test Starting...\n\n🔍 Checking Hedera testnet topic...');
+        this.bot.sendMessage(chatId, '🥒 Black-Litterman Index Starting...\n\n🔍 Checking Hedera testnet topic...');
 
         // Log hashscan URL for debugging
         const hashscanUrl = `https://hashscan.io/testnet/topic/${TESTNET_TOPIC_ID}`;
@@ -1831,14 +1829,14 @@ Send \`/ai [your message]\` to chat with the AI agent.
 
             // Final status with debugging info
             this.bot.sendMessage(chatId, 
-              `🎉 CucumberMoped Index Test Complete!\n\n` +
+              `🎉 Black-Litterman Index Update Complete!\n\n` +
               `📊 Topic ID: \`${TESTNET_TOPIC_ID}\`\n` +
               `🔗 HashScan: ${hashscanUrl}\n` +
-              `💰 Total Market Cap: $${(portfolio.totalMarketCap / 1e9).toFixed(2)}B\n` +
+              //`💰 Total Market Cap: $${(portfolio.totalMarketCap / 1e9).toFixed(2)}B\n` +
               `🎯 Active Allocations: ${portfolio.allocations.length}\n` +
               `⏰ Data Age: ${needsNewCalculation ? 'Just calculated' : 'Recent (under 10 min)'}\n` +
               `🔄 Next Update: ${needsNewCalculation ? 'Available now' : 'In 10+ minutes'}\n\n` +
-              `Use /testindex again to refresh the index!`,
+              `Use /blindex again to refresh the index!`,
               { parse_mode: 'Markdown' }
             );
 
