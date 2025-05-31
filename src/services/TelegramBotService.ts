@@ -1,8 +1,9 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { DatabaseService } from './DatabaseService';
 import { WalletService } from './WalletService';
-import { OneInchService, OneInchQuoteParams } from './OneInchService';
-import { User } from '../types';
+import { BlockchainService } from './BlockchainService';
+import { IOneInchService, OneInchQuoteParams } from '../types';
+
 import { getTokenBySymbol, getTokensByChain, CHAIN_NAMES, SUPPORTED_TOKENS } from '../config/tokens';
 import { ethers } from 'ethers';
 
@@ -10,21 +11,24 @@ export class TelegramBotService {
   private bot: TelegramBot;
   private db: DatabaseService;
   private walletService: WalletService;
-  private oneInchService: OneInchService;
+  private oneInchService: IOneInchService;
+  private blockchainService?: BlockchainService;
 
   constructor(
     token: string,
     db: DatabaseService,
     walletService: WalletService,
-    oneInchService: OneInchService
+    oneInchService: IOneInchService,
+    blockchainService?: BlockchainService
   ) {
     this.bot = new TelegramBot(token, { polling: true });
     this.db = db;
     this.walletService = walletService;
     this.oneInchService = oneInchService;
+    this.blockchainService = blockchainService;
 
     this.setupCommands();
-    this.setupHandlers();
+    this.setupCallbackHandlers();
   }
 
   private setupCommands(): void {
@@ -41,7 +45,7 @@ export class TelegramBotService {
     ]);
   }
 
-  private setupHandlers(): void {
+  private setupCallbackHandlers(): void {
     // Start command
     this.bot.onText(/\/start/, async (msg) => {
       const chatId = msg.chat.id;
@@ -103,7 +107,7 @@ export class TelegramBotService {
         }
 
         this.bot.sendMessage(chatId,
-          `💼 Wallet Information:\n\n` +
+          ` Wallet Information:\n\n` +
           `Address: \`${user.walletAddress}\`\n` +
           `Created: ${user.createdAt.toLocaleDateString('en-US')}\n\n` +
           `Use /balance to see your balances.`,
@@ -129,18 +133,107 @@ export class TelegramBotService {
           return;
         }
 
+        // If blockchain service is available, get real balances
+        if (this.blockchainService) {
+          this.bot.sendMessage(chatId, '🔍 Checking your mainnet balances...');
+          
+          try {
+            // Get real balances from all supported mainnet chains
+            const realBalances = await this.blockchainService.getAllBalances(user.walletAddress);
+            
+            if (realBalances.length === 0) {
+              this.bot.sendMessage(chatId, 
+                `💰 Mainnet Balances:\n\nNo balances found on any mainnet chains.\n\n` +
+                `Wallet address:\n\`${user.walletAddress}\`\n\n` +
+                `🔗 [View on Blockscout](${this.blockchainService.getWalletExplorerUrl(user.walletAddress)})\n\n` +
+                `💡 Send USDC to your wallet to start trading!\n` +
+                `💰 **Recommended**: Send USDC on Base for best trading experience\n` +
+                `• Base USDC has lower fees and faster transactions\n` +
+                `• You can bridge USDC from other chains to Base`,
+                { parse_mode: 'Markdown' }
+              );
+              return;
+            }
+
+            // Sort balances to prioritize USDC, especially on Base
+            const sortedBalances = realBalances.sort((a, b) => {
+              // USDC on Base first
+              if (a.tokenSymbol === 'USDC' && a.chainId === 8453) return -1;
+              if (b.tokenSymbol === 'USDC' && b.chainId === 8453) return 1;
+              
+              // Other USDC next
+              if (a.tokenSymbol === 'USDC' && b.tokenSymbol !== 'USDC') return -1;
+              if (b.tokenSymbol === 'USDC' && a.tokenSymbol !== 'USDC') return 1;
+              
+              // Base network tokens next
+              if (a.chainId === 8453 && b.chainId !== 8453) return -1;
+              if (b.chainId === 8453 && a.chainId !== 8453) return 1;
+              
+              return 0;
+            });
+
+            let balanceText = '💰 Your Mainnet Balances:\n\n';
+            
+            // Group by chain for better display
+            const balancesByChain: Record<number, typeof realBalances> = {};
+            for (const balance of sortedBalances) {
+              if (!balancesByChain[balance.chainId]) {
+                balancesByChain[balance.chainId] = [];
+              }
+              balancesByChain[balance.chainId].push(balance);
+            }
+
+            // Display balances grouped by chain
+            for (const [chainId, chainBalances] of Object.entries(balancesByChain)) {
+              const chainName = this.blockchainService.getChainName(parseInt(chainId));
+              balanceText += `**${chainName}:**\n`;
+              
+              for (const balance of chainBalances) {
+                const icon = balance.tokenSymbol === 'USDC' ? '💰' : 
+                           balance.tokenSymbol === 'ETH' ? '⚡' : '🪙';
+                balanceText += `${icon} ${balance.formatted}\n`;
+              }
+              balanceText += '\n';
+            }
+            
+            balanceText += `📱 Wallet: \`${user.walletAddress}\`\n`;
+            balanceText += `🔗 [View on Blockscout](${this.blockchainService.getWalletExplorerUrl(user.walletAddress)})\n\n`;
+            
+            // Add trading suggestions based on balances
+            const hasUSDC = realBalances.some(b => b.tokenSymbol === 'USDC');
+            const hasBaseUSDC = realBalances.some(b => b.tokenSymbol === 'USDC' && b.chainId === 8453);
+            
+            if (hasBaseUSDC) {
+              balanceText += `🎯 Ready to trade! Use commands like:\n`;
+              balanceText += `• \`/buy ETH 100\` - Buy ETH with 100 USDC\n`;
+              balanceText += `• \`/quote PEPE 50\` - Get quote for PEPE with 50 USDC`;
+            } else if (hasUSDC) {
+              balanceText += `💡 Consider bridging your USDC to Base for lower fees`;
+            } else {
+              balanceText += `💡 Send USDC to start trading!`;
+            }
+            
+            this.bot.sendMessage(chatId, balanceText, { parse_mode: 'Markdown' });
+            return;
+          } catch (error) {
+            console.error('Error getting mainnet balances:', error);
+            this.bot.sendMessage(chatId, '❌ Error checking mainnet balances. Showing database balances instead.');
+          }
+        }
+
+        // Fallback to database balances (for mainnet or when blockchain service unavailable)
         const balances = await this.db.getTokenBalances(userId);
         
         if (balances.length === 0) {
           this.bot.sendMessage(chatId, 
-            `💰 Balances:\n\nNo balances found. Deposit funds to your wallet to start trading.\n\n` +
+            `💰 Database Balances:\n\nNo balances found. Deposit funds to your wallet to start trading.\n\n` +
             `Wallet address:\n\`${user.walletAddress}\``,
             { parse_mode: 'Markdown' }
           );
           return;
         }
 
-        let balanceText = '💰 Balances:\n\n';
+        let balanceText = '💰 Database Balances:\n\n';
         for (const balance of balances) {
           const chainName = CHAIN_NAMES[balance.chainId] || 'Unknown';
           balanceText += `${balance.tokenSymbol}: ${balance.balance} (${chainName})\n`;
@@ -169,20 +262,36 @@ export class TelegramBotService {
         }
 
         const parts = input.split(' ');
-        if (parts.length !== 3) {
+        let fromSymbol = 'USDC'; // Default to USDC
+        let toSymbol: string;
+        let amount: string;
+        let chainId = 8453; // Default to Base
+
+        if (parts.length === 2) {
+          // Format: /buy ETH 100 (assumes USDC as from token, Base as chain)
+          [toSymbol, amount] = parts;
+        } else if (parts.length === 3) {
+          // Format: /buy 100 USDC ETH (explicit from/to tokens)
+          [amount, fromSymbol, toSymbol] = parts;
+        } else {
           this.bot.sendMessage(chatId, 
-            'Invalid command. Use: /buy [amount] [from_token] [to_token]\n' +
-            'Example: /buy 100 USDC ETH'
+            'Invalid command format. Use:\n' +
+            '• `/buy ETH 100` - Buy ETH with 100 USDC (on Base)\n' +
+            '• `/buy 100 USDC ETH` - Buy ETH with 100 USDC\n\n' +
+            '💡 Base network is recommended for lower fees!'
           );
           return;
         }
 
-        const [amount, fromSymbol, toSymbol] = parts;
-        const fromToken = getTokenBySymbol(fromSymbol.toUpperCase(), 1); // Default to Ethereum
-        const toToken = getTokenBySymbol(toSymbol.toUpperCase(), 1);
+        // Get token information, defaulting to Base network
+        const fromToken = getTokenBySymbol(fromSymbol.toUpperCase(), chainId);
+        const toToken = getTokenBySymbol(toSymbol.toUpperCase(), chainId);
 
         if (!fromToken || !toToken) {
-          this.bot.sendMessage(chatId, 'Unknown token. Use /tokens to see supported tokens.');
+          this.bot.sendMessage(chatId, 
+            `Unknown token on Base network. Use /tokens to see supported tokens.\n\n` +
+            `💡 Try popular tokens: USDC, ETH, cbBTC, DEGEN, BRETT`
+          );
           return;
         }
 
@@ -199,7 +308,7 @@ export class TelegramBotService {
         const quote = await this.oneInchService.getQuote(quoteParams);
         const outputAmount = ethers.formatUnits(quote.toAmount, toToken.decimals);
 
-        // Send confirmation
+        // Send confirmation with Base network highlighted
         const keyboard = {
           inline_keyboard: [
             [
@@ -210,9 +319,10 @@ export class TelegramBotService {
         };
 
         this.bot.sendMessage(chatId,
-          `📊 Purchase Quote:\n\n` +
+          `📊 Purchase Quote (Base Network):\n\n` +
           `Selling: ${amount} ${fromSymbol.toUpperCase()}\n` +
           `Receiving: ~${outputAmount} ${toSymbol.toUpperCase()}\n` +
+          `Network: Base (lower fees ✨)\n` +
           `Price Impact: ~${quote.priceImpact}%\n` +
           `Estimated Gas: ${quote.estimatedGas}\n\n` +
           `Confirm purchase:`,
@@ -221,7 +331,13 @@ export class TelegramBotService {
 
       } catch (error) {
         console.error('Error in buy command:', error);
-        this.bot.sendMessage(chatId, 'Error getting quote. Please check token names and amount.');
+        this.bot.sendMessage(chatId, 
+          'Error getting quote. Please check:\n' +
+          '• Token names are correct\n' +
+          '• You have sufficient balance\n' +
+          '• Amount is valid\n\n' +
+          '💡 Remember: USDC on Base is recommended!'
+        );
       }
     });
 
@@ -318,21 +434,22 @@ export class TelegramBotService {
 /start - Create new wallet or login
 /wallet - Show wallet information
 /balance - Show token balances
-/buy [amount] [token1] [token2] - Buy tokens
-/sell [amount] [token1] [token2] - Sell tokens
+/buy [token] [amount] - Buy tokens with USDC
+/sell [amount] [token] [to_token] - Sell tokens
 /quote [amount] [token1] [token2] - Get price quote
 /tokens - Show supported tokens
 /history - Show transaction history
 
 **Examples:**
+\`/buy ETH 100\` - Buy ETH with 100 USDC (Base)
 \`/buy 100 USDC ETH\` - Buy ETH with 100 USDC
 \`/sell 0.1 ETH USDC\` - Sell 0.1 ETH for USDC
 \`/quote 50 USDC PEPE\` - Get price for 50 USDC → PEPE
 
 **Notes:**
-• First deposit USDC to your wallet
-• All trades go through 1inch Fusion+
-• Always keep ETH for gas fees
+💰 USDC on Base is the primary trading token
+⚡ Base network offers lower fees
+🔗 All trades go through 1inch Fusion+
       `;
       
       this.bot.sendMessage(chatId, helpText, { parse_mode: 'Markdown' });
@@ -414,4 +531,4 @@ export class TelegramBotService {
     this.bot.stopPolling();
     console.log('Telegram bot stopped.');
   }
-} 
+}

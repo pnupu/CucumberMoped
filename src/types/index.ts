@@ -81,4 +81,29 @@ export interface BotCommand {
   command: string;
   description: string;
   handler: string;
+}
+
+// OneInch service interfaces
+export interface OneInchQuoteParams {
+  srcChainId: number;
+  dstChainId: number;
+  srcTokenAddress: string;
+  dstTokenAddress: string;
+  amount: string;
+  walletAddress: string;
+}
+
+export interface OneInchOrderResult {
+  orderId: string;
+  status: string;
+  txHash?: string;
+}
+
+export interface IOneInchService {
+  getQuote(params: OneInchQuoteParams): Promise<SwapQuote>;
+  placeOrder(quoteParams: OneInchQuoteParams, encryptedPrivateKey: string, slippage?: number): Promise<OneInchOrderResult>;
+  getActiveOrders(walletAddress: string): Promise<any[]>;
+  getOrderStatus(orderId: string): Promise<string>;
+  estimateGas(params: OneInchQuoteParams): Promise<string>;
+  isValidTokenAddress(address: string): boolean;
 } 

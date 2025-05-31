@@ -4,34 +4,44 @@
   "description": "Telegram bot for token trading using 1inch Fusion+",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "ts-node src/index.ts",
-    "watch": "nodemon --exec ts-node src/index.ts",
+    "start:testnet": "node dist/index.testnet.js",
+    "dev": "nodemon src/index.ts",
+    "dev:testnet": "nodemon src/index.testnet.ts",
+    "build": "tsc",
     "setup": "node scripts/setup.js",
     "clean": "rm -rf dist",
     "rebuild": "npm run clean && npm run build",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": ["telegram", "bot", "trading", "1inch", "fusion", "crypto"],
+  "keywords": [
+    "telegram",
+    "bot",
+    "trading",
+    "1inch",
+    "fusion",
+    "crypto"
+  ],
   "author": "",
   "license": "MIT",
   "dependencies": {
     "@1inch/cross-chain-sdk": "0.1.15-rc.0",
-    "node-telegram-bot-api": "^0.64.0",
-    "ethers": "^6.8.1",
-    "sqlite3": "^5.1.6",
+    "@blockscout/app-sdk": "^0.1.0",
+    "axios": "^1.6.2",
     "bcrypt": "^5.1.1",
     "dotenv": "^16.3.1",
-    "axios": "^1.6.2",
+    "ethers": "^6.8.1",
+    "node-telegram-bot-api": "^0.64.0",
+    "sqlite3": "^5.1.6",
     "web3": "^4.3.0"
   },
   "devDependencies": {
+    "@types/bcrypt": "^5.0.2",
     "@types/node": "^20.10.4",
     "@types/node-telegram-bot-api": "^0.64.5",
-    "@types/bcrypt": "^5.0.2",
-    "typescript": "^5.3.3",
+    "nodemon": "^3.0.2",
     "ts-node": "^10.9.2",
-    "nodemon": "^3.0.2"
+    "typescript": "^5.3.3"
   }
-} 
+}

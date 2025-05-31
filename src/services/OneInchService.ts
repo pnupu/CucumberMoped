@@ -1,24 +1,9 @@
 import { SDK, NetworkEnum as OneInchNetworkEnum } from "@1inch/cross-chain-sdk";
 import { ethers } from 'ethers';
-import { SwapQuote, OrderParams, NetworkEnum } from '../types';
+import { SwapQuote, OrderParams, NetworkEnum, IOneInchService, OneInchQuoteParams, OneInchOrderResult } from '../types';
 import { WalletService } from './WalletService';
 
-export interface OneInchQuoteParams {
-  srcChainId: number;
-  dstChainId: number;
-  srcTokenAddress: string;
-  dstTokenAddress: string;
-  amount: string;
-  walletAddress: string;
-}
-
-export interface OneInchOrderResult {
-  orderId: string;
-  status: string;
-  txHash?: string;
-}
-
-export class OneInchService {
+export class OneInchService implements IOneInchService {
   private sdk: SDK;
   private walletService: WalletService;
 

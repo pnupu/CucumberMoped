@@ -10,6 +10,8 @@ build/
 
 # Environment variables (IMPORTANT: Never commit sensitive data!)
 .env
+.env.testnet
+.env.mainnet
 .env.local
 .env.development.local
 .env.test.local
