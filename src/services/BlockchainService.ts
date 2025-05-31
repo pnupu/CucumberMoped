@@ -1,7 +1,9 @@
 import { ethers } from 'ethers';
 import { TestnetNetworkEnum, TESTNET_SUPPORTED_TOKENS } from '../config/tokens.testnet';
 import { SUPPORTED_TOKENS } from '../config/tokens';
-import { SupportedToken, NetworkEnum } from '../types';
+import { SupportedToken, NetworkEnum, OneInchQuoteParams } from '../types';
+import { OneInchService } from './OneInchService';
+import { WalletService } from './WalletService';
 
 export interface RealBalance {
   tokenSymbol: string;
@@ -36,13 +38,42 @@ export interface BlockscoutBalance {
   };
 }
 
+export interface TokenInfo {
+  cataloged: boolean;
+  contractAddress: string;
+  decimals: string;
+  name: string;
+  symbol: string;
+  totalSupply: string;
+  type: string;
+}
+
+export interface TokenInfoResponse {
+  message: string;
+  result: TokenInfo;
+  status: string;
+}
+
 export class BlockchainService {
   private isTestnet: boolean;
   private blockscoutUrls: Map<number, string> = new Map();
+  private oneInchService: OneInchService;
+  private walletService: WalletService;
 
-  constructor(isTestnet: boolean = false) {
+  constructor(isTestnet: boolean = false, oneInchService?: OneInchService, walletService?: WalletService) {
     this.isTestnet = isTestnet;
     this.initializeBlockscoutUrls();
+    
+    // Initialize WalletService with encryption key from environment
+    const encryptionKey = process.env.WALLET_ENCRYPTION_KEY || 'default-encryption-key';
+    const ws = walletService || new WalletService(encryptionKey);
+    
+    this.oneInchService = oneInchService || new OneInchService(
+      "https://api.1inch.dev",
+      process.env.ONEINCH_API_KEY || "",
+      ws
+    );
+    this.walletService = ws;
   }
 
   private initializeBlockscoutUrls(): void {
@@ -50,12 +81,19 @@ export class BlockchainService {
       this.blockscoutUrls.set(TestnetNetworkEnum.SEPOLIA, 'https://eth-sepolia.blockscout.com/api/v2');
       this.blockscoutUrls.set(TestnetNetworkEnum.BASE_SEPOLIA, 'https://base-sepolia.blockscout.com/api/v2');
       this.blockscoutUrls.set(TestnetNetworkEnum.ARBITRUM_SEPOLIA, 'https://arbitrum-sepolia.blockscout.com/api/v2');
-      // Mumbai doesn't have Blockscout, skip for now
+      this.blockscoutUrls.set(TestnetNetworkEnum.POLYGON_MUMBAI, 'https://mumbai.blockscout.com/api/v2');
     } else {
       this.blockscoutUrls.set(NetworkEnum.ETHEREUM, 'https://eth.blockscout.com/api/v2');
       this.blockscoutUrls.set(NetworkEnum.BASE, 'https://base.blockscout.com/api/v2');
       this.blockscoutUrls.set(NetworkEnum.ARBITRUM, 'https://arbitrum.blockscout.com/api/v2');
       this.blockscoutUrls.set(NetworkEnum.POLYGON, 'https://polygon.blockscout.com/api/v2');
+      this.blockscoutUrls.set(NetworkEnum.BNB, 'https://bsc.blockscout.com/api/v2');
+      this.blockscoutUrls.set(NetworkEnum.AVALANCHE, 'https://avax.blockscout.com/api/v2');
+      this.blockscoutUrls.set(NetworkEnum.OPTIMISM, 'https://optimism.blockscout.com/api/v2');
+      this.blockscoutUrls.set(NetworkEnum.GNOSIS, 'https://gnosis.blockscout.com/api/v2');
+      this.blockscoutUrls.set(NetworkEnum.FANTOM, 'https://ftm.blockscout.com/api/v2');
+      this.blockscoutUrls.set(NetworkEnum.ZKSYNC, 'https://zksync.blockscout.com/api/v2');
+      this.blockscoutUrls.set(NetworkEnum.LINEA, 'https://linea.blockscout.com/api/v2');
     }
 
     console.log(`✅ Initialized Blockscout APIs for ${this.isTestnet ? 'testnet' : 'mainnet'}`);
@@ -272,9 +310,20 @@ export class BlockchainService {
         case NetworkEnum.ETHEREUM:
         case NetworkEnum.BASE:
         case NetworkEnum.ARBITRUM:
+        case NetworkEnum.OPTIMISM:
+        case NetworkEnum.ZKSYNC:
+        case NetworkEnum.LINEA:
           return 'ETH';
         case NetworkEnum.POLYGON:
           return 'POL';
+        case NetworkEnum.BNB:
+          return 'BNB';
+        case NetworkEnum.AVALANCHE:
+          return 'AVAX';
+        case NetworkEnum.GNOSIS:
+          return 'xDAI';
+        case NetworkEnum.FANTOM:
+          return 'FTM';
         default:
           return 'ETH';
       }
@@ -325,14 +374,21 @@ export class BlockchainService {
         [TestnetNetworkEnum.SEPOLIA]: 'https://eth-sepolia.blockscout.com',
         [TestnetNetworkEnum.BASE_SEPOLIA]: 'https://base-sepolia.blockscout.com',
         [TestnetNetworkEnum.ARBITRUM_SEPOLIA]: 'https://arbitrum-sepolia.blockscout.com',
-        [TestnetNetworkEnum.POLYGON_MUMBAI]: 'https://mumbai.polygonscan.com'
+        [TestnetNetworkEnum.POLYGON_MUMBAI]: 'https://mumbai.blockscout.com'
       };
     } else {
       baseUrls = {
         [NetworkEnum.ETHEREUM]: 'https://eth.blockscout.com',
         [NetworkEnum.BASE]: 'https://base.blockscout.com',
         [NetworkEnum.ARBITRUM]: 'https://arbitrum.blockscout.com',
-        [NetworkEnum.POLYGON]: 'https://polygon.blockscout.com'
+        [NetworkEnum.POLYGON]: 'https://polygon.blockscout.com',
+        [NetworkEnum.BNB]: 'https://bsc.blockscout.com',
+        [NetworkEnum.AVALANCHE]: 'https://avax.blockscout.com',
+        [NetworkEnum.OPTIMISM]: 'https://optimism.blockscout.com',
+        [NetworkEnum.GNOSIS]: 'https://gnosis.blockscout.com',
+        [NetworkEnum.FANTOM]: 'https://ftm.blockscout.com',
+        [NetworkEnum.ZKSYNC]: 'https://zksync.blockscout.com',
+        [NetworkEnum.LINEA]: 'https://linea.blockscout.com'
       };
     }
 
@@ -352,5 +408,114 @@ export class BlockchainService {
   getWalletExplorerUrl(walletAddress: string, chainId?: number): string {
     const targetChainId = chainId || (this.isTestnet ? TestnetNetworkEnum.SEPOLIA : NetworkEnum.ETHEREUM);
     return this.getExplorerUrl(targetChainId, undefined, walletAddress);
+  }
+
+  /**
+   * Get token information from Blockscout API
+   */
+  async getTokenInfo(chainId: number, contractAddress: string): Promise<TokenInfo | null> {
+    const apiUrl = this.blockscoutUrls.get(chainId);
+    if (!apiUrl) {
+      throw new Error(`No Blockscout API URL found for chain ${chainId}`);
+    }
+
+    try {
+      const url = `${apiUrl}?module=token&action=getToken&contractaddress=${contractAddress}`;
+      console.log(`🔍 Fetching token info from: ${url}`);
+      
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`Blockscout API error: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json() as TokenInfoResponse;
+      
+      if (data.status === '1' && data.message === 'OK') {
+        return data.result;
+      }
+      
+      return null;
+    } catch (error) {
+      console.error(`Error fetching token info from Blockscout API for chain ${chainId}:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Buy token by contract address and add it to supported tokens
+   */
+  async buyTokenByContract(
+    chainId: number,
+    contractAddress: string,
+    amount: string,
+    walletAddress: string,
+    encryptedPrivateKey: string
+  ): Promise<{ success: boolean; token?: SupportedToken; txHash?: string; error?: string }> {
+    try {
+      // 1. Get token info from Blockscout
+      const tokenInfo = await this.getTokenInfo(chainId, contractAddress);
+      
+      if (!tokenInfo) {
+        return {
+          success: false,
+          error: 'Token not found on Blockscout'
+        };
+      }
+
+      // 2. Create new supported token
+      const newToken: SupportedToken = {
+        symbol: tokenInfo.symbol,
+        address: tokenInfo.contractAddress,
+        chainId: chainId,
+        decimals: parseInt(tokenInfo.decimals),
+        isStablecoin: false // Default to false as requested
+      };
+
+      // 3. Add token to SUPPORTED_TOKENS if it doesn't exist
+      const existingToken = SUPPORTED_TOKENS.find(
+        token => token.address.toLowerCase() === contractAddress.toLowerCase() && token.chainId === chainId
+      );
+
+      if (!existingToken) {
+        SUPPORTED_TOKENS.push(newToken);
+        console.log(`✅ Added new token ${tokenInfo.symbol} to supported tokens`);
+      }
+
+      // 4. Get native token address for the chain
+      const nativeTokenAddress = '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE';
+
+      // 5. Create quote parameters for 1inch
+      const quoteParams: OneInchQuoteParams = {
+        srcChainId: chainId,
+        dstChainId: chainId, // Same chain swap
+        srcTokenAddress: nativeTokenAddress, // Using native token (ETH, MATIC, etc.)
+        dstTokenAddress: contractAddress, // The token we want to buy
+        amount: ethers.parseEther(amount).toString(), // Convert amount to wei
+        walletAddress: walletAddress
+      };
+
+      // 6. Get quote from 1inch
+      const quote = await this.oneInchService.getQuote(quoteParams);
+
+      // 7. Place the order
+      const orderResult = await this.oneInchService.placeOrder(
+        quoteParams,
+        encryptedPrivateKey,
+        1 // 1% slippage
+      );
+
+      return {
+        success: true,
+        token: newToken,
+        txHash: orderResult.orderId
+      };
+
+    } catch (error) {
+      console.error('Error in buyTokenByContract:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred'
+      };
+    }
   }
 } 

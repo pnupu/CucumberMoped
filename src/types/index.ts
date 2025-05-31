@@ -63,7 +63,14 @@ export enum NetworkEnum {
   ETHEREUM = 1,
   BASE = 8453,
   ARBITRUM = 42161,
-  POLYGON = 137
+  POLYGON = 137,
+  BNB = 56,
+  AVALANCHE = 43114,
+  OPTIMISM = 10,
+  GNOSIS = 100,
+  FANTOM = 250,
+  ZKSYNC = 324,
+  LINEA = 59144
 }
 
 export interface TradingPair {
