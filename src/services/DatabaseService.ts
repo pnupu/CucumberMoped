@@ -34,6 +34,11 @@ export class DatabaseService {
         )
       `);
 
+      // Migration: Add World ID columns if they don't exist
+      this.addColumnIfNotExists('users', 'world_id_verified', 'BOOLEAN DEFAULT FALSE');
+      this.addColumnIfNotExists('users', 'world_id_nullifier_hash', 'TEXT');
+      this.addColumnIfNotExists('users', 'world_id_proof', 'TEXT');
+
       // Token balances table
       this.db.run(`
         CREATE TABLE IF NOT EXISTS token_balances (
@@ -600,6 +605,15 @@ export class DatabaseService {
           }
         }
       );
+    });
+  }
+
+  private addColumnIfNotExists(tableName: string, columnName: string, columnType: string): void {
+    // Try to add the column - if it already exists, SQLite will throw an error which we catch
+    this.db.run(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnType}`, (err: Error | null) => {
+      if (err && !err.message.includes('duplicate column name')) {
+        console.error(`Error adding column ${columnName} to ${tableName}:`, err);
+      }
     });
   }
 } 
