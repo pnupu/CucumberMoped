@@ -87,8 +87,6 @@ export class BlockchainService {
       this.blockscoutUrls.set(NetworkEnum.BASE, 'https://base.blockscout.com/api/v2');
       this.blockscoutUrls.set(NetworkEnum.ARBITRUM, 'https://arbitrum.blockscout.com/api/v2');
       this.blockscoutUrls.set(NetworkEnum.POLYGON, 'https://polygon.blockscout.com/api/v2');
-      this.blockscoutUrls.set(NetworkEnum.BNB, 'https://bsc.blockscout.com/api/v2');
-      this.blockscoutUrls.set(NetworkEnum.AVALANCHE, 'https://avax.blockscout.com/api/v2');
       this.blockscoutUrls.set(NetworkEnum.OPTIMISM, 'https://optimism.blockscout.com/api/v2');
       this.blockscoutUrls.set(NetworkEnum.GNOSIS, 'https://gnosis.blockscout.com/api/v2');
       this.blockscoutUrls.set(NetworkEnum.FANTOM, 'https://ftm.blockscout.com/api/v2');
@@ -293,7 +291,7 @@ export class BlockchainService {
   /**
    * Get native token symbol for a chain
    */
-  private getNativeTokenSymbol(chainId: number): string {
+  public getNativeTokenSymbol(chainId: number): string {
     if (this.isTestnet) {
       switch (chainId) {
         case TestnetNetworkEnum.SEPOLIA:
@@ -316,10 +314,6 @@ export class BlockchainService {
           return 'ETH';
         case NetworkEnum.POLYGON:
           return 'POL';
-        case NetworkEnum.BNB:
-          return 'BNB';
-        case NetworkEnum.AVALANCHE:
-          return 'AVAX';
         case NetworkEnum.GNOSIS:
           return 'xDAI';
         case NetworkEnum.FANTOM:
@@ -382,8 +376,6 @@ export class BlockchainService {
         [NetworkEnum.BASE]: 'https://base.blockscout.com',
         [NetworkEnum.ARBITRUM]: 'https://arbitrum.blockscout.com',
         [NetworkEnum.POLYGON]: 'https://polygon.blockscout.com',
-        [NetworkEnum.BNB]: 'https://bsc.blockscout.com',
-        [NetworkEnum.AVALANCHE]: 'https://avax.blockscout.com',
         [NetworkEnum.OPTIMISM]: 'https://optimism.blockscout.com',
         [NetworkEnum.GNOSIS]: 'https://gnosis.blockscout.com',
         [NetworkEnum.FANTOM]: 'https://ftm.blockscout.com',
@@ -420,7 +412,7 @@ export class BlockchainService {
     }
 
     try {
-      const url = `${apiUrl}?module=token&action=getToken&contractaddress=${contractAddress}`;
+      const url = `${apiUrl.replace('/api/v2', '/api')}?module=token&action=getToken&contractaddress=${contractAddress}`;
       console.log(`🔍 Fetching token info from: ${url}`);
       
       const response = await fetch(url);
@@ -481,18 +473,29 @@ export class BlockchainService {
         console.log(`✅ Added new token ${tokenInfo.symbol} to supported tokens`);
       }
 
-      // 4. Get native token address for the chain
-      const nativeTokenAddress = '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE';
+      // 4. Setup cross-chain swap from Base USDC to target token
+      const sourceChainId = 8453; // Always use Base as source
+      const baseUsdcAddress = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'; // Base USDC
 
-      // 5. Create quote parameters for 1inch
+      // 5. Create quote parameters for cross-chain swap
       const quoteParams: OneInchQuoteParams = {
-        srcChainId: chainId,
-        dstChainId: chainId, // Same chain swap
-        srcTokenAddress: nativeTokenAddress, // Using native token (ETH, MATIC, etc.)
-        dstTokenAddress: contractAddress, // The token we want to buy
-        amount: ethers.parseEther(amount).toString(), // Convert amount to wei
+        srcChainId: sourceChainId, // Base
+        dstChainId: chainId, // Target chain (e.g., Arbitrum)
+        srcTokenAddress: baseUsdcAddress, // Base USDC
+        dstTokenAddress: contractAddress, // Target token on destination chain
+        amount: ethers.parseUnits(amount, 6).toString(), // USDC has 6 decimals
         walletAddress: walletAddress
       };
+
+      console.log('🔧 Quote parameters:', {
+        srcChainId: quoteParams.srcChainId,
+        dstChainId: quoteParams.dstChainId,
+        srcTokenAddress: quoteParams.srcTokenAddress,
+        dstTokenAddress: quoteParams.dstTokenAddress,
+        amount: quoteParams.amount,
+        walletAddress: quoteParams.walletAddress,
+        isCrossChain: quoteParams.srcChainId !== quoteParams.dstChainId
+      });
 
       // 6. Get quote from 1inch
       const quote = await this.oneInchService.getQuote(quoteParams);

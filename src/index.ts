@@ -172,7 +172,7 @@ class TradingBotApp {
       
       // Start Telegram bot
       this.telegramBot.start();
-
+      
       // Initialize Hedera Agent Service
       console.log('🤖 Initializing Hedera AI Agent...');
       try {

@@ -253,8 +253,6 @@ export const CHAIN_NAMES: Record<number, string> = {
   [NetworkEnum.BASE]: 'Base',
   [NetworkEnum.ARBITRUM]: 'Arbitrum',
   [NetworkEnum.POLYGON]: 'Polygon',
-  [NetworkEnum.BNB]: 'BNB Chain',
-  [NetworkEnum.AVALANCHE]: 'Avalanche',
   [NetworkEnum.OPTIMISM]: 'Optimism',
   [NetworkEnum.GNOSIS]: 'Gnosis',
   [NetworkEnum.FANTOM]: 'Fantom',

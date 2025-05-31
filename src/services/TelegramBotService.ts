@@ -56,6 +56,26 @@ export class TelegramBotService {
     return Math.random().toString(36).substring(2, 15);
   }
 
+  private getNativeTokenSymbolFallback(chainId: number): string {
+    switch (chainId) {
+      case 1: // Ethereum
+      case 8453: // Base
+      case 42161: // Arbitrum
+      case 10: // Optimism
+      case 324: // zkSync Era
+      case 59144: // Linea
+        return 'ETH';
+      case 137: // Polygon
+        return 'POL';
+      case 100: // Gnosis
+        return 'xDAI';
+      case 250: // Fantom
+        return 'FTM';
+      default:
+        return 'ETH';
+    }
+  }
+
   private storeQuote(quoteParams: OneInchQuoteParams): string {
     const quoteId = this.generateQuoteId();
     this.quoteStorage.set(quoteId, quoteParams);
@@ -2671,25 +2691,63 @@ Ready to verify? Download World App! 🚀`;
         if (parts.length !== 3) {
           this.bot.sendMessage(chatId, 
             'Invalid command format. Use:\n' +
-            '• `/buycontract 0x123... 100 USDC` - Buy token at contract address with 100 USDC\n\n' +
-            '💡 Base network is recommended for lower fees!'
+            '• `/buycontract ETH 0x123... 100` - Buy token on Ethereum with 100 USDC (from Base)\n' +
+            '• `/buycontract BASE 0x123... 100` - Buy token on Base with 100 USDC\n' +
+            '• `/buycontract ARB 0x123... 100` - Buy token on Arbitrum with 100 USDC (from Base)\n\n' +
+            '**Supported chains:** ETH, BASE, ARB, POLYGON, OP, GNOSIS, FTM, ZKSYNC, LINEA\n\n' +
+            '💡 **Note:** Always uses Base USDC as the source token for cross-chain purchases!'
           );
           return;
         }
 
-        const [contractAddress, amount, fromSymbol] = parts;
-        const chainId = 8453; // Default to Base
+        const [chainSymbol, contractAddress, amount] = parts;
 
-        // Get from token information
-        const fromToken = getTokenBySymbol(fromSymbol.toUpperCase(), chainId);
-        if (!fromToken) {
-          this.bot.sendMessage(chatId, `❌ Token ${fromSymbol.toUpperCase()} not found on Base network.`);
+        // Map chain symbols to chain IDs
+        const chainMapping: Record<string, number> = {
+          'ETH': 1,        // Ethereum
+          'BASE': 8453,    // Base
+          'ARB': 42161,    // Arbitrum
+          'POLYGON': 137,  // Polygon
+          'OP': 10,        // Optimism
+          'GNOSIS': 100,   // Gnosis
+          'FTM': 250,      // Fantom
+          'ZKSYNC': 324,   // zkSync Era
+          'LINEA': 59144   // Linea
+        };
+
+        const chainId = chainMapping[chainSymbol.toUpperCase()];
+        if (!chainId) {
+          this.bot.sendMessage(chatId, 
+            `❌ Unsupported chain: ${chainSymbol.toUpperCase()}\n\n` +
+            `**Supported chains:**\n` +
+            `• ETH (Ethereum)\n` +
+            `• BASE (Base)\n` +
+            `• ARB (Arbitrum)\n` +
+            `• POLYGON (Polygon)\n` +
+            `• OP (Optimism)\n` +
+            `• GNOSIS (Gnosis)\n` +
+            `• FTM (Fantom)\n` +
+            `• ZKSYNC (zkSync Era)\n` +
+            `• LINEA (Linea)`
+          );
           return;
         }
 
-        this.bot.sendMessage(chatId, `🔍 Buying token at ${contractAddress} with ${amount} ${fromSymbol.toUpperCase()}...`);
+        // Get native token symbol for display
+        const nativeSymbol = this.blockchainService?.getNativeTokenSymbol(chainId) || 
+          this.getNativeTokenSymbolFallback(chainId);
 
-        // Call buyTokenByContract
+        this.bot.sendMessage(chatId, 
+          `🔍 Buying token on ${CHAIN_NAMES[chainId] || chainSymbol.toUpperCase()}...\n\n` +
+          `📊 **Purchase Details:**\n` +
+          `• Chain: ${CHAIN_NAMES[chainId] || chainSymbol.toUpperCase()}\n` +
+          `• Contract: \`${contractAddress}\`\n` +
+          `• Amount: ${amount} USDC (from Base)\n` +
+          `• Source: Base USDC → Target token\n\n` +
+          `⏳ Processing cross-chain transaction...`
+        );
+
+        // Call buyTokenByContract (it automatically uses native token)
         const result = await this.blockchainService?.buyTokenByContract(
           chainId,
           contractAddress,
@@ -2702,11 +2760,12 @@ Ready to verify? Download World App! 🚀`;
           this.bot.sendMessage(chatId,
             `✅ **Token Purchase Successful!**\n\n` +
             `📊 **Transaction Details:**\n` +
+            `• Chain: ${CHAIN_NAMES[chainId] || chainSymbol.toUpperCase()}\n` +
             `• Contract: \`${contractAddress}\`\n` +
-            `• Amount: ${amount} ${fromSymbol.toUpperCase()}\n` +
+            `• Amount: ${amount} USDC (from Base)\n` +
             `• Tx Hash: \`${result.txHash}\`\n\n` +
             `🔗 [View on Blockscout](${this.blockchainService?.getExplorerUrl(chainId, result.txHash)})\n\n` +
-            `Token has been added to supported tokens list.`,
+            `🎉 Token has been added to supported tokens list!`,
             { parse_mode: 'Markdown' }
           );
         } else {
