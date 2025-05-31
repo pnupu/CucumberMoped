@@ -28,10 +28,17 @@ export class OneInchService implements IOneInchService {
   private initializeFusionSDKs(authKey: string): void {
     // Initialize Fusion SDKs for each supported network
     const networkMappings = [
-      { chainId: 1, fusionNetwork: FusionNetworkEnum.ETHEREUM },
-      { chainId: 8453, fusionNetwork: FusionNetworkEnum.COINBASE },
-      { chainId: 42161, fusionNetwork: FusionNetworkEnum.ARBITRUM },
-      { chainId: 137, fusionNetwork: FusionNetworkEnum.POLYGON }
+      { chainId: 1, fusionNetwork: 1 }, // Ethereum
+      { chainId: 8453, fusionNetwork: 8453 }, // Base
+      { chainId: 42161, fusionNetwork: 42161 }, // Arbitrum
+      { chainId: 137, fusionNetwork: 137 }, // Polygon
+      { chainId: 56, fusionNetwork: 56 }, // BNB Chain
+      { chainId: 43114, fusionNetwork: 43114 }, // Avalanche
+      { chainId: 10, fusionNetwork: 10 }, // Optimism
+      { chainId: 100, fusionNetwork: 100 }, // Gnosis
+      { chainId: 250, fusionNetwork: 250 }, // Fantom
+      { chainId: 324, fusionNetwork: 324 }, // zkSync
+      { chainId: 59144, fusionNetwork: 59144 } // Linea
     ];
 
     for (const { chainId, fusionNetwork } of networkMappings) {
@@ -492,6 +499,20 @@ export class OneInchService implements IOneInchService {
         return NetworkEnum.ARBITRUM;
       case 137:
         return NetworkEnum.POLYGON;
+      case 56:
+        return NetworkEnum.BNB;
+      case 43114:
+        return NetworkEnum.AVALANCHE;
+      case 10:
+        return NetworkEnum.OPTIMISM;
+      case 100:
+        return NetworkEnum.GNOSIS;
+      case 250:
+        return NetworkEnum.FANTOM;
+      case 324:
+        return NetworkEnum.ZKSYNC;
+      case 59144:
+        return NetworkEnum.LINEA;
       default:
         return NetworkEnum.ETHEREUM;
     }

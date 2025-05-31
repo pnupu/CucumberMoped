@@ -75,6 +75,7 @@ export class TelegramBotService {
       { command: 'wallet', description: 'Show wallet information' },
       { command: 'balance', description: 'Show token balances' },
       { command: 'buy', description: 'Buy tokens (e.g. /buy 100 USDC ETH)' },
+      { command: 'buycontract', description: 'Buy tokens by contract address (e.g. /buycontract 0x123... 100 USDC)' },
       { command: 'sell', description: 'Sell tokens (e.g. /sell 0.1 ETH USDC)' },
       { command: 'limitbuy', description: 'Create limit buy order (e.g. /limitbuy 1 ETH)' },
       { command: 'limitsell', description: 'Create limit sell order (e.g. /limitsell 1 ETH)' },
@@ -2416,6 +2417,73 @@ Ready to verify? Download World App! 🚀`;
           await safeAnswerCallbackQuery('Error checking verification status');
         }
         return;
+      }
+    });
+
+    // Buy by contract command
+    this.bot.onText(/\/buycontract (.+)/, async (msg, match) => {
+      const chatId = msg.chat.id;
+      const userId = msg.from?.id;
+      const input = match?.[1];
+
+      if (!userId || !input) return;
+
+      try {
+        const user = await this.db.getUser(userId);
+        if (!user) {
+          this.bot.sendMessage(chatId, 'You are not registered yet. Use /start to begin.');
+          return;
+        }
+
+        const parts = input.split(' ');
+        if (parts.length !== 3) {
+          this.bot.sendMessage(chatId, 
+            'Invalid command format. Use:\n' +
+            '• `/buycontract 0x123... 100 USDC` - Buy token at contract address with 100 USDC\n\n' +
+            '💡 Base network is recommended for lower fees!'
+          );
+          return;
+        }
+
+        const [contractAddress, amount, fromSymbol] = parts;
+        const chainId = 8453; // Default to Base
+
+        // Get from token information
+        const fromToken = getTokenBySymbol(fromSymbol.toUpperCase(), chainId);
+        if (!fromToken) {
+          this.bot.sendMessage(chatId, `❌ Token ${fromSymbol.toUpperCase()} not found on Base network.`);
+          return;
+        }
+
+        this.bot.sendMessage(chatId, `🔍 Buying token at ${contractAddress} with ${amount} ${fromSymbol.toUpperCase()}...`);
+
+        // Call buyTokenByContract
+        const result = await this.blockchainService?.buyTokenByContract(
+          chainId,
+          contractAddress,
+          amount,
+          user.walletAddress,
+          user.encryptedPrivateKey
+        );
+
+        if (result) {
+          this.bot.sendMessage(chatId,
+            `✅ **Token Purchase Successful!**\n\n` +
+            `📊 **Transaction Details:**\n` +
+            `• Contract: \`${contractAddress}\`\n` +
+            `• Amount: ${amount} ${fromSymbol.toUpperCase()}\n` +
+            `• Tx Hash: \`${result.txHash}\`\n\n` +
+            `🔗 [View on Blockscout](${this.blockchainService?.getExplorerUrl(chainId, result.txHash)})\n\n` +
+            `Token has been added to supported tokens list.`,
+            { parse_mode: 'Markdown' }
+          );
+        } else {
+          this.bot.sendMessage(chatId, '❌ Failed to buy token. Please try again.');
+        }
+
+      } catch (error) {
+        console.error('Error in buycontract command:', error);
+        this.bot.sendMessage(chatId, `❌ Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
       }
     });
   }
