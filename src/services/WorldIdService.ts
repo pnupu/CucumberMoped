@@ -7,7 +7,7 @@
  * - User signal generation for verification tracking
  */
 
-import { DatabaseService } from './DatabaseService';
+import { PrismaDatabaseService } from './PrismaDatabaseService';
 import { 
   IWorldIdService, 
   WorldIdProof, 
@@ -25,11 +25,11 @@ interface WorldIdApiResponse {
 export class WorldIdService implements IWorldIdService {
   private readonly appId: string;
   private readonly action: string;
-  private db: DatabaseService;
+  private db: PrismaDatabaseService;
 
   constructor(
     appId: string,
-    db: DatabaseService,
+    db: PrismaDatabaseService,
     action: string = 'identity-verification'
   ) {
     this.appId = appId;

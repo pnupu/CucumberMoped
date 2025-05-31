@@ -1,5 +1,5 @@
 import TelegramBot from 'node-telegram-bot-api';
-import { DatabaseService } from './DatabaseService';
+import { PrismaDatabaseService } from './PrismaDatabaseService';
 import { WalletService } from './WalletService';
 import { BlockchainService } from './BlockchainService';
 import { WorldIdService } from './WorldIdService';
@@ -12,7 +12,7 @@ import { ethers } from 'ethers';
 
 export class TelegramBotService {
   private bot: TelegramBot;
-  private db: DatabaseService;
+  private db: PrismaDatabaseService;
   private walletService: WalletService;
   private oneInchService: IOneInchServiceWithLimitOrders;
   private blockchainService?: BlockchainService;
@@ -23,7 +23,7 @@ export class TelegramBotService {
 
   constructor(
     token: string,
-    db: DatabaseService,
+    db: PrismaDatabaseService,
     walletService: WalletService,
     oneInchService: IOneInchServiceWithLimitOrders,
     blockchainService?: BlockchainService,

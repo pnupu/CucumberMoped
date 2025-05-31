@@ -1,5 +1,5 @@
 import dotenv from 'dotenv';
-import { DatabaseService } from './services/DatabaseService';
+import { PrismaDatabaseService } from './services/PrismaDatabaseService';
 import { WalletService } from './services/WalletService';
 import { OneInchService } from './services/OneInchService';
 import { OneInchLimitOrderService } from './services/OneInchLimitOrderService';
@@ -15,7 +15,7 @@ import { StrategyService } from './services/StrategyService';
 dotenv.config();
 
 class TradingBotApp {
-  private db: DatabaseService;
+  private db: PrismaDatabaseService;
   private walletService: WalletService;
   private blockchainService: BlockchainService;
   private oneInchService: OneInchService;
@@ -37,7 +37,7 @@ class TradingBotApp {
     this.validateEnvironment();
 
     // Initialize services
-    this.db = new DatabaseService(process.env.DATABASE_PATH || './data/bot.db');
+    this.db = new PrismaDatabaseService();
     this.walletService = new WalletService(process.env.WALLET_ENCRYPTION_KEY!);
     this.blockchainService = new BlockchainService(false); // false = mainnet
     this.worldIdService = new WorldIdService(
@@ -166,7 +166,7 @@ class TradingBotApp {
         this.telegramBot.stop();
         
         // Close database connection
-        this.db.close();
+        await this.db.close();
         
         console.log('✅ Shutdown complete');
         process.exit(0);

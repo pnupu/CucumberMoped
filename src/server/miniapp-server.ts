@@ -8,15 +8,15 @@
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import path from 'path';
-import { DatabaseService } from '../services/DatabaseService';
+import { PrismaDatabaseService } from '../services/PrismaDatabaseService';
 import { WorldIdService } from '../services/WorldIdService';
 
 export class MiniAppServer {
   private app: express.Application;
-  private db: DatabaseService;
+  private db: PrismaDatabaseService;
   private worldIdService: WorldIdService;
 
-  constructor(db: DatabaseService, worldIdService: WorldIdService) {
+  constructor(db: PrismaDatabaseService, worldIdService: WorldIdService) {
     this.app = express();
     this.db = db;
     this.worldIdService = worldIdService;

@@ -1,5 +1,5 @@
 import { HederaService } from './services/HederaService';
-import { DatabaseService } from './services/DatabaseService';
+import { PrismaDatabaseService } from './services/PrismaDatabaseService';
 import { HederaTopic, HederaMessage } from './types';
 import * as dotenv from 'dotenv';
 
@@ -36,7 +36,7 @@ async function testHederaRealService() {
 
   // Initialize services
   const hederaService = new HederaService();
-  const dbService = new DatabaseService('./data/test-hedera.db');
+  const dbService = new PrismaDatabaseService('file:./data/test-hedera.db');
 
   try {
     // Set operator account
