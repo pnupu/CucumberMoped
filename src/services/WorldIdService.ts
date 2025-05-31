@@ -62,7 +62,7 @@ export class WorldIdService implements IWorldIdService {
       app_id: this.appId,
       action: verificationAction,
       signal: signal,
-      verification_level: 'orb' // Default to orb level
+      verification_level: 'device' // Default to device level
     });
 
     const verificationUrl = `https://id.worldcoin.org/verify?${params.toString()}`;
@@ -82,7 +82,7 @@ export class WorldIdService implements IWorldIdService {
       app_id: this.appId,
       action: verificationAction,
       signal: signal,
-      verification_level: 'orb'
+      verification_level: 'device'
     });
 
     console.log(`🔗 Generated URL signal: "${signal}" for user ${userId}`);
@@ -189,7 +189,7 @@ export class WorldIdService implements IWorldIdService {
             nullifier_hash: 'already_verified',
             merkle_root: '',
             proof: '',
-            verification_level: 'orb'
+            verification_level: 'device'
           }
         };
       }
