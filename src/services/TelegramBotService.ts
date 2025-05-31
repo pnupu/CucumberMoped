@@ -2,6 +2,7 @@ import TelegramBot from 'node-telegram-bot-api';
 import { DatabaseService } from './DatabaseService';
 import { WalletService } from './WalletService';
 import { BlockchainService } from './BlockchainService';
+import { WorldIdService } from './WorldIdService';
 import { IOneInchService, OneInchQuoteParams } from '../types';
 
 import { getTokenBySymbol, getTokensByChain, CHAIN_NAMES, SUPPORTED_TOKENS } from '../config/tokens';
@@ -13,6 +14,7 @@ export class TelegramBotService {
   private walletService: WalletService;
   private oneInchService: IOneInchService;
   private blockchainService?: BlockchainService;
+  private worldIdService?: WorldIdService;
   private quoteStorage: Map<string, OneInchQuoteParams> = new Map();
 
   constructor(
@@ -20,13 +22,15 @@ export class TelegramBotService {
     db: DatabaseService,
     walletService: WalletService,
     oneInchService: IOneInchService,
-    blockchainService?: BlockchainService
+    blockchainService?: BlockchainService,
+    worldIdService?: WorldIdService
   ) {
     this.bot = new TelegramBot(token, { polling: true });
     this.db = db;
     this.walletService = walletService;
     this.oneInchService = oneInchService;
     this.blockchainService = blockchainService;
+    this.worldIdService = worldIdService;
 
     this.setupCommands();
     this.setupCallbackHandlers();
@@ -51,6 +55,7 @@ export class TelegramBotService {
   private setupCommands(): void {
     this.bot.setMyCommands([
       { command: 'start', description: 'Start using the bot' },
+      { command: 'verify', description: 'Verify your humanity with World ID' },
       { command: 'wallet', description: 'Show wallet information' },
       { command: 'balance', description: 'Show token balances' },
       { command: 'buy', description: 'Buy tokens (e.g. /buy 100 USDC ETH)' },
@@ -80,10 +85,17 @@ export class TelegramBotService {
         // Check if user already exists
         const existingUser = await this.db.getUser(userId);
         if (existingUser) {
+          const verificationStatus = existingUser.worldIdVerified ? 
+            '✅ World ID Verified' : 
+            '❌ Not verified - Use /verify to get verified';
+            
           this.bot.sendMessage(chatId, 
             `Welcome back! 🎉\n\n` +
-            `Your wallet address: \`${existingUser.walletAddress}\`\n\n` +
-            `Use /help to see available commands.`,
+            `Your wallet address: \`${existingUser.walletAddress}\`\n` +
+            `Verification status: ${verificationStatus}\n\n` +
+            `${existingUser.worldIdVerified ? 
+              'Use /help to see available commands.' : 
+              'Use /verify to verify your humanity and unlock trading features!'}`,
             { parse_mode: 'Markdown' }
           );
           return;
@@ -102,6 +114,8 @@ export class TelegramBotService {
           `Address: \`${wallet.address}\`\n\n` +
           `⚠️ *IMPORTANT:* Save this mnemonic phrase in a secure place:\n` +
           `\`${wallet.mnemonic}\`\n\n` +
+          `🌍 **Next Step: Verify your humanity**\n` +
+          `Use /verify to verify with World ID and unlock trading features.\n\n` +
           `Use /help to see available commands.`,
           { parse_mode: 'Markdown' }
         );
@@ -110,6 +124,131 @@ export class TelegramBotService {
         this.bot.sendMessage(chatId, 'Error creating wallet. Please try again.');
       }
     });
+
+    // /verify command for World ID verification
+    this.bot.onText(/\/verify/, async (msg) => {
+      const chatId = msg.chat.id;
+      const userId = msg.from?.id;
+
+      if (!userId) {
+        this.bot.sendMessage(chatId, 'Error: Could not identify user.');
+        return;
+      }
+
+      if (!this.worldIdService) {
+        this.bot.sendMessage(chatId, 'World ID verification is not available.');
+        return;
+      }
+
+      try {
+        // Check if user is already verified
+        const isVerified = await this.worldIdService.isUserVerified(userId);
+        if (isVerified) {
+          this.bot.sendMessage(chatId, '✅ You are already verified with World ID!');
+          return;
+        }
+
+        // Get or create user first
+        let user = await this.db.getUser(userId);
+        if (!user) {
+          // Create new wallet for user
+          const walletInfo = this.walletService.generateWallet();
+          const encryptedPrivateKey = this.walletService.encrypt(walletInfo.privateKey);
+          
+          await this.db.createUser(
+            userId,
+            msg.from?.username,
+            walletInfo.address,
+            encryptedPrivateKey
+          );
+          
+          user = await this.db.getUser(userId);
+        }
+
+        if (!user) {
+          this.bot.sendMessage(chatId, 'Error creating user account.');
+          return;
+        }
+
+        // Direct users to the Mini App for World ID verification
+        const instructions = `🌍 **World ID Verification Required**
+
+To use this trading bot, you need to verify your humanity with World ID.
+
+**How to verify:**
+1. **Open our Mini App** by clicking the button below
+2. **Complete verification** with World ID directly in the app
+3. **Return to this chat** to start trading
+
+**What is World ID?**
+• Proves you're a unique human
+• Privacy-preserving verification
+• No personal data required
+• One verification per person globally
+
+Ready to verify? 🚀`;
+
+        const verifyKeyboard = {
+          inline_keyboard: [
+            [
+              { text: '🌍 Open Verification App', web_app: { url: process.env.MINIAPP_URL || 'http://localhost:3001' } }
+            ],
+            [
+              { text: '✅ I completed verification', callback_data: `worldid_completed_${userId}` }
+            ],
+            [
+              { text: '❓ Help', callback_data: `worldid_help_${userId}` }
+            ]
+          ]
+        };
+
+        await this.bot.sendMessage(chatId, instructions, {
+          reply_markup: verifyKeyboard,
+          parse_mode: 'Markdown'
+        });
+        
+      } catch (error) {
+        console.error('Error in /verify command:', error);
+        this.bot.sendMessage(chatId, 'Error setting up World ID verification. Please try again.');
+      }
+    });
+
+    // Helper method to check World ID verification status
+    const checkWorldIdVerification = async (userId: number, chatId: number): Promise<boolean> => {
+      if (!this.worldIdService) {
+        return true; // If World ID service is not available, allow trading
+      }
+
+      try {
+        const isVerified = await this.worldIdService.isUserVerified(userId);
+        if (!isVerified) {
+          const keyboard = {
+            inline_keyboard: [
+              [{ text: '🌍 Get Verified', callback_data: 'start_verification' }]
+            ]
+          };
+
+          this.bot.sendMessage(chatId, 
+            '🚫 **Verification Required**\n\n' +
+            'You must verify your humanity with World ID to use trading features.\n\n' +
+            '**Why verification?**\n' +
+            '• Prevents bot abuse\n' +
+            '• Ensures fair access\n' +
+            '• Protects real users\n\n' +
+            'Click the button below to get verified! 👇',
+            { 
+              parse_mode: 'Markdown',
+              reply_markup: keyboard 
+            }
+          );
+          return false;
+        }
+        return true;
+      } catch (error) {
+        console.error('Error checking World ID verification:', error);
+        return true; // On error, allow trading to continue
+      }
+    };
 
     // Wallet info command
     this.bot.onText(/\/wallet/, async (msg) => {
@@ -280,6 +419,12 @@ export class TelegramBotService {
           return;
         }
 
+        // Check World ID verification before allowing trading
+        const isVerificationPassed = await checkWorldIdVerification(userId, chatId);
+        if (!isVerificationPassed) {
+          return; // Verification message already sent
+        }
+
         const parts = input.split(' ');
         let fromSymbol = 'USDC'; // Default to USDC
         let toSymbol: string;
@@ -373,6 +518,12 @@ export class TelegramBotService {
         if (!user) {
           this.bot.sendMessage(chatId, 'You are not registered yet. Use /start to begin.');
           return;
+        }
+
+        // Check World ID verification before allowing trading
+        const isVerificationPassed = await checkWorldIdVerification(userId, chatId);
+        if (!isVerificationPassed) {
+          return; // Verification message already sent
         }
 
         const parts = input.split(' ');
@@ -570,28 +721,39 @@ export class TelegramBotService {
       const helpText = `
 🤖 **Trading Bot Help**
 
-**Commands:**
-/start - Create new wallet or login
-/wallet - Show wallet information
-/balance - Show token balances
+🌍 **IMPORTANT: World ID Verification Required**
+This bot requires proof of humanhood to prevent abuse and ensure fair access for real users.
+
+**Getting Started:**
+1️⃣ /start - Create wallet or login
+2️⃣ /verify - Verify your humanity with World ID
+3️⃣ Start trading! 🚀
+
+**Trading Commands:**
+/quote [amount] [token1] [token2] - Get live price quote + instant buy
 /buy [token] [amount] - Buy tokens with USDC
 /sell [amount] [token] [to_token] - Sell tokens
-/quote [amount] [token1] [token2] - Get price quote with instant buy option
+/balance - Show token balances
 /orders - Check active/recent orders
 /status [order_id] - Check specific order status
+
+**Wallet & Info:**
+/wallet - Show wallet information
 /tokens - Show supported tokens
 /history - Show transaction history
 
 **Quick Trading Workflow:**
-1️⃣ \`/quote 0.1 USDC DEGEN\` - Get live price quote
+1️⃣ \`/quote 10 USDC DEGEN\` - Get live price quote
 2️⃣ Click "🚀 Buy Now" button - Execute trade instantly
 3️⃣ \`/orders\` - Check if your trade executed
 4️⃣ \`/balance\` - See updated balances
 
-**Order Tracking:**
-\`/orders\` - See all your recent orders
-\`/status 0x1234...\` - Check specific order by ID
-💡 Orders may take time to execute on-chain
+**World ID Verification:**
+• Proves you're a unique human
+• Prevents bot abuse and spam
+• No personal information required
+• One verification per person
+• Required for all trading features
 
 **Examples:**
 \`/quote 10 USDC DEGEN\` - Quote + instant buy option (Base)
@@ -606,6 +768,7 @@ export class TelegramBotService {
 📊 Real-time order status tracking
 💰 USDC on Base is the primary trading token
 ⚡ Base network offers lower fees
+🌍 Human-verified trading with World ID
       `;
       
       this.bot.sendMessage(chatId, helpText, { parse_mode: 'Markdown' });
@@ -726,11 +889,222 @@ export class TelegramBotService {
 
       if (!chatId || !data) return;
 
+      // Helper function to safely answer callback queries
+      const safeAnswerCallbackQuery = async (text: string, showAlert = false) => {
+        try {
+          await this.bot.answerCallbackQuery(query.id, { text, show_alert: showAlert });
+        } catch (error: any) {
+          // Ignore timeout errors to prevent crashes
+          if (error?.code === 'ETELEGRAM' && error?.response?.body?.description?.includes('query is too old')) {
+            console.log('Callback query expired, ignoring timeout error');
+            return;
+          }
+          console.error('Error answering callback query:', error);
+        }
+      };
+
       if (data === 'cancel') {
-        this.bot.editMessageText('❌ Operation cancelled.', {
-          chat_id: chatId,
-          message_id: query.message?.message_id
-        });
+        try {
+          await this.bot.editMessageText('❌ Operation cancelled.', {
+            chat_id: chatId,
+            message_id: query.message?.message_id
+          });
+          await safeAnswerCallbackQuery('Operation cancelled');
+        } catch (error) {
+          console.error('Error handling cancel callback:', error);
+        }
+        return;
+      }
+
+      // World ID verification callbacks
+      if (data === 'start_verification') {
+        try {
+          if (!this.worldIdService) {
+            await safeAnswerCallbackQuery('World ID service not available');
+            return;
+          }
+
+          const instructions = this.worldIdService.generateTelegramInstructions(userId);
+          const verificationUrl = await this.worldIdService.generateWorldIdUrl(userId);
+          
+          const verifyKeyboard = {
+            inline_keyboard: [
+              [
+                { text: '🌍 Open Verification App', web_app: { url: process.env.MINIAPP_URL || 'http://localhost:3001' } }
+              ],
+              [
+                { text: '✅ I completed verification', callback_data: `worldid_completed_${userId}` }
+              ],
+              [
+                { text: '❓ Help', callback_data: `worldid_help_${userId}` }
+              ]
+            ]
+          };
+
+          await this.bot.sendMessage(chatId, 
+            instructions + `\n\n🔗 **Verification Link:**\n\`${verificationUrl}\`\n\nClick the button above to verify your humanity!`, { 
+            parse_mode: 'Markdown',
+            reply_markup: verifyKeyboard
+          });
+
+          await safeAnswerCallbackQuery('Verification process started!');
+
+        } catch (error) {
+          console.error('Error starting verification:', error);
+          await safeAnswerCallbackQuery('Error starting verification');
+        }
+        return;
+      }
+
+      // Handle new verification check callbacks
+      if (data.startsWith('worldid_check_')) {
+        try {
+          if (!this.worldIdService) {
+            await safeAnswerCallbackQuery('World ID service not available');
+            return;
+          }
+
+          await safeAnswerCallbackQuery('Checking verification...');
+
+          // Check user's verification status
+          const verificationResult = await this.worldIdService.checkAndVerifyUser(userId);
+          
+          if (verificationResult.success) {
+            await this.bot.editMessageText(
+              '✅ **Verification Successful!**\n\n' +
+              'Your wallet is verified with World ID! You can now use all trading features.\n\n' +
+              '🎉 Welcome to human-verified trading! 🎉\n\n' +
+              'Try these commands:\n' +
+              '• `/balance` - Check your balances\n' +
+              '• `/buy ETH 100` - Buy tokens with USDC\n' +
+              '• `/quote PEPE 50` - Get price quotes',
+              {
+                chat_id: chatId,
+                message_id: query.message?.message_id,
+                parse_mode: 'Markdown'
+              }
+            );
+          } else {
+            await this.bot.editMessageText(
+              '❌ **Verification Not Found**\n\n' +
+              'Your wallet is not yet verified with World ID.\n\n' +
+              '**To get verified:**\n' +
+              '1. Download World App from worldcoin.org\n' +
+              '2. Complete the verification process\n' +
+              '3. Return here and click "Check my verification" again\n\n' +
+              `**Error:** ${verificationResult.error || 'Verification failed'}`,
+              {
+                chat_id: chatId,
+                message_id: query.message?.message_id,
+                parse_mode: 'Markdown',
+                reply_markup: {
+                  inline_keyboard: [
+                    [
+                      { text: '📱 Download World App', url: 'https://worldcoin.org/download' }
+                    ],
+                    [
+                      { text: '🔄 Check again', callback_data: `worldid_check_${userId}` }
+                    ]
+                  ]
+                }
+              }
+            );
+          }
+
+        } catch (error) {
+          console.error('Error checking verification:', error);
+          await safeAnswerCallbackQuery('Error checking verification status');
+        }
+        return;
+      }
+
+      // Handle help callback
+      if (data.startsWith('worldid_help_')) {
+        try {
+          const helpText = `🌍 **World ID Help**
+
+**What is World ID?**
+World ID is a privacy-preserving digital identity that proves you're a unique human without revealing personal information.
+
+**How to get verified:**
+1. **Download World App** from worldcoin.org
+2. **Find an Orb location** or use device verification
+3. **Complete verification** (takes 2-5 minutes)
+4. **Return here** and click "Check my verification"
+
+**Why do we require this?**
+• Prevents bot abuse and spam
+• Ensures fair access for real humans
+• No personal data required - just proof of humanhood
+• One verification per person globally
+
+**Trouble?**
+• Visit worldcoin.org for support
+• Check World App for verification status
+• Make sure you completed the full process
+
+Ready to verify? Download World App! 🚀`;
+
+          await this.bot.editMessageText(helpText, {
+            chat_id: chatId,
+            message_id: query.message?.message_id,
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  { text: '📱 Download World App', url: 'https://worldcoin.org/download' }
+                ],
+                [
+                  { text: '↩️ Back to verification', callback_data: 'start_verification' }
+                ]
+              ]
+            }
+          });
+
+          await safeAnswerCallbackQuery('Here\'s how World ID works!');
+        } catch (error) {
+          console.error('Error showing help:', error);
+          await safeAnswerCallbackQuery('Error showing help');
+        }
+        return;
+      }
+
+      // Legacy check_verification callback (redirect to new flow)
+      if (data === 'check_verification') {
+        try {
+          if (!this.worldIdService) {
+            await safeAnswerCallbackQuery('World ID service not available');
+            return;
+          }
+
+          // Redirect to new verification check
+          await safeAnswerCallbackQuery('Checking verification...');
+          
+          const verificationResult = await this.worldIdService.checkAndVerifyUser(userId);
+          
+          if (verificationResult.success) {
+            await this.bot.editMessageText(
+              '✅ **Verification Successful!**\n\n' +
+              'You are now verified with World ID and can use all trading features.\n\n' +
+              '🎉 Welcome to the future of human-verified trading! 🎉\n\n' +
+              'Try these commands:\n' +
+              '• `/quote 10 USDC ETH` - Get price quotes\n' +
+              '• `/buy ETH 100` - Buy tokens\n' +
+              '• `/balance` - Check your balances',
+              {
+                chat_id: chatId,
+                message_id: query.message?.message_id,
+                parse_mode: 'Markdown'
+              }
+            );
+          } else {
+            await safeAnswerCallbackQuery('Verification not found. Please complete the World ID process first.', true);
+          }
+
+        } catch (error) {
+          console.error('Error checking verification:', error);
+          await safeAnswerCallbackQuery('Error checking verification status');
+        }
         return;
       }
 
@@ -741,7 +1115,7 @@ export class TelegramBotService {
           
           const user = await this.db.getUser(userId);
           if (!user) {
-            this.bot.answerCallbackQuery(query.id, { text: 'User not found!' });
+            await safeAnswerCallbackQuery('User not found!');
             return;
           }
 
@@ -767,7 +1141,7 @@ export class TelegramBotService {
 
           await this.db.createTransaction(transaction);
 
-          this.bot.editMessageText(
+          await this.bot.editMessageText(
             `✅ Purchase order submitted!\n\n` +
             `Order ID: ${orderResult.orderId}\n` +
             `Status: ${orderResult.status}\n\n` +
@@ -780,7 +1154,7 @@ export class TelegramBotService {
 
         } catch (error) {
           console.error('Error confirming buy:', error);
-          this.bot.answerCallbackQuery(query.id, { text: 'Error submitting order!' });
+          await safeAnswerCallbackQuery('Error submitting order!');
         }
       }
 
@@ -790,8 +1164,8 @@ export class TelegramBotService {
           const quoteParams = this.quoteStorage.get(quoteId);
           
           if (!quoteParams) {
-            this.bot.answerCallbackQuery(query.id, { text: 'Quote expired! Get a new quote.' });
-            this.bot.editMessageText(
+            await safeAnswerCallbackQuery('Quote expired! Get a new quote.');
+            await this.bot.editMessageText(
               `❌ Quote Expired\n\n` +
               `This quote has expired. Please use /quote to get a fresh quote.`,
               {
@@ -804,15 +1178,15 @@ export class TelegramBotService {
 
           const user = await this.db.getUser(userId);
           if (!user) {
-            this.bot.answerCallbackQuery(query.id, { text: 'User not found!' });
+            await safeAnswerCallbackQuery('User not found!');
             return;
           }
 
           // Acknowledge the callback immediately
-          this.bot.answerCallbackQuery(query.id, { text: 'Executing trade...' });
+          await safeAnswerCallbackQuery('Executing trade...');
 
           // Update message to show processing
-          this.bot.editMessageText(
+          await this.bot.editMessageText(
             `⏳ Executing trade...\n\n` +
             `Please wait while we process your transaction.`,
             {
@@ -860,7 +1234,7 @@ export class TelegramBotService {
           // Clean up the stored quote
           this.quoteStorage.delete(quoteId);
 
-          this.bot.editMessageText(
+          await this.bot.editMessageText(
             `✅ Trade Executed Successfully!\n\n` +
             `Swapped: ${fromAmount} ${fromTokenInfo?.symbol || 'Unknown'}\n` +
             `For: ${toTokenInfo?.symbol || 'Unknown'}\n` +
@@ -877,7 +1251,7 @@ export class TelegramBotService {
         } catch (error) {
           console.error('Error executing quote trade:', error);
           
-          this.bot.editMessageText(
+          await this.bot.editMessageText(
             `❌ Trade Failed\n\n` +
             `Error: ${error instanceof Error ? error.message : 'Unknown error'}\n\n` +
             `Please try getting a new quote with /quote command.`,
@@ -887,6 +1261,96 @@ export class TelegramBotService {
             }
           );
         }
+      }
+
+      // Handle verification completion callbacks
+      if (data.startsWith('worldid_completed_')) {
+        try {
+          if (!this.worldIdService) {
+            await safeAnswerCallbackQuery('World ID service not available');
+            return;
+          }
+
+          await safeAnswerCallbackQuery('Checking verification...');
+
+          // Check user's verification status
+          const verificationResult = await this.worldIdService.checkAndVerifyUser(userId);
+          
+          if (verificationResult.success) {
+            await this.bot.editMessageText(
+              '✅ **Verification Successful!**\n\n' +
+              'Your identity is verified with World ID! You can now use all trading features.\n\n' +
+              '🎉 Welcome to human-verified trading! 🎉\n\n' +
+              'Try these commands:\n' +
+              '• `/balance` - Check your balances\n' +
+              '• `/buy ETH 100` - Buy tokens with USDC\n' +
+              '• `/quote PEPE 50` - Get price quotes',
+              {
+                chat_id: chatId,
+                message_id: query.message?.message_id,
+                parse_mode: 'Markdown'
+              }
+            );
+          } else {
+            // Try to find verification directly from database first
+            const isVerified = await this.worldIdService.isUserVerified(userId);
+            
+            if (isVerified) {
+              // User is verified but checkAndVerifyUser failed - still show success
+              await this.bot.editMessageText(
+                '✅ **Verification Successful!**\n\n' +
+                'Your identity is verified with World ID! You can now use all trading features.\n\n' +
+                '🎉 Welcome to human-verified trading! 🎉\n\n' +
+                'Try these commands:\n' +
+                '• `/balance` - Check your balances\n' +
+                '• `/buy ETH 100` - Buy tokens with USDC\n' +
+                '• `/quote PEPE 50` - Get price quotes',
+                {
+                  chat_id: chatId,
+                  message_id: query.message?.message_id,
+                  parse_mode: 'Markdown'
+                }
+              );
+            } else {
+              // Create new message instead of editing to avoid "not modified" error
+              const errorMessage = 
+                '❌ **Verification Not Found**\n\n' +
+                'Your verification is not yet complete.\n\n' +
+                '**To complete verification:**\n' +
+                '1. Use the Mini App button above to verify\n' +
+                '2. Complete the World ID verification process\n' +
+                '3. Return here and click "I completed verification" again\n\n' +
+                `**Status:** ${verificationResult.error || 'Verification pending'}\n\n` +
+                '💡 **Tip:** Make sure you complete the verification in the Mini App first!';
+
+              // Send a new message instead of editing
+              await this.bot.sendMessage(chatId, errorMessage, {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                  inline_keyboard: [
+                    [
+                      { text: '🌍 Open Verification App', web_app: { url: process.env.MINIAPP_URL || 'http://localhost:3001' } }
+                    ],
+                    [
+                      { text: '🔄 Check again', callback_data: `worldid_completed_${userId}` }
+                    ],
+                    [
+                      { text: '❓ Need help?', callback_data: `worldid_help_${userId}` }
+                    ]
+                  ]
+                }
+              });
+              
+              // Also log the verification error for debugging
+              console.log(`🐛 DEBUG: Verification failed for user ${userId} with error: ${verificationResult.error}`);
+            }
+          }
+
+        } catch (error) {
+          console.error('Error checking verification:', error);
+          await safeAnswerCallbackQuery('Error checking verification status');
+        }
+        return;
       }
     });
   }

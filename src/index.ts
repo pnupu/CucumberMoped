@@ -4,6 +4,8 @@ import { WalletService } from './services/WalletService';
 import { OneInchService } from './services/OneInchService';
 import { BlockchainService } from './services/BlockchainService';
 import { TelegramBotService } from './services/TelegramBotService';
+import { WorldIdService } from './services/WorldIdService';
+import { MiniAppServer } from './server/miniapp-server';
 
 // Load environment variables
 dotenv.config();
@@ -14,10 +16,13 @@ class TradingBotApp {
   private blockchainService: BlockchainService;
   private oneInchService: OneInchService;
   private telegramBot: TelegramBotService;
+  private worldIdService: WorldIdService;
+  private miniAppServer: MiniAppServer;
 
   constructor() {
-    console.log('🚀 Starting Mainnet Trading Bot...');
+    console.log('🚀 Starting Mainnet Trading Bot with Telegram Mini App...');
     console.log('💰 Primary token: USDC on Base');
+    console.log('🌍 World ID verification enabled via Mini App');
     
     // Validate required environment variables
     this.validateEnvironment();
@@ -26,6 +31,11 @@ class TradingBotApp {
     this.db = new DatabaseService(process.env.DATABASE_PATH || './data/bot.db');
     this.walletService = new WalletService(process.env.WALLET_ENCRYPTION_KEY!);
     this.blockchainService = new BlockchainService(false); // false = mainnet
+    this.worldIdService = new WorldIdService(
+      process.env.WORLDID_APP_ID!,
+      this.db,
+      'identity-verification' // Match the action from your World ID app settings
+    );
     this.oneInchService = new OneInchService(
       process.env.ONEINCH_API_URL!,
       process.env.ONEINCH_API_KEY!,
@@ -36,8 +46,12 @@ class TradingBotApp {
       this.db,
       this.walletService,
       this.oneInchService,
-      this.blockchainService
+      this.blockchainService,
+      this.worldIdService
     );
+    
+    // Initialize Mini App server
+    this.miniAppServer = new MiniAppServer(this.db, this.worldIdService);
   }
 
   private validateEnvironment(): void {
@@ -45,7 +59,9 @@ class TradingBotApp {
       'TELEGRAM_BOT_TOKEN',
       'ONEINCH_API_KEY',
       'ONEINCH_API_URL',
-      'WALLET_ENCRYPTION_KEY'
+      'WALLET_ENCRYPTION_KEY',
+      'WORLDID_APP_ID',
+      'MINIAPP_URL'
     ];
 
     const missing = requiredVars.filter(varName => !process.env[varName]);
@@ -54,6 +70,11 @@ class TradingBotApp {
       console.error('❌ Missing required environment variables:');
       missing.forEach(varName => console.error(`  - ${varName}`));
       console.error('\nPlease check your .env file and ensure all required variables are set.');
+      console.error('\nFor World ID integration:');
+      console.error('  - WORLDID_APP_ID: Your World ID app ID from developer.worldcoin.org');
+      console.error('  - Action: identity-verification (configured in your World ID app)');
+      console.error('\nFor Mini App:');
+      console.error('  - MINIAPP_URL: HTTPS URL for the Telegram Mini App (use ngrok for local development)');
       process.exit(1);
     }
 
@@ -69,19 +90,26 @@ class TradingBotApp {
     }
 
     console.log('✅ Environment validation passed for mainnet');
+    console.log(`🌍 World ID App ID: ${process.env.WORLDID_APP_ID}`);
+    console.log(`🔧 World ID Action: identity-verification`);
+    console.log(`📱 Mini App URL: ${process.env.MINIAPP_URL}`);
   }
 
   public async start(): Promise<void> {
     try {
-      console.log('🚀 Starting Mainnet Trading Bot...');
+      console.log('🚀 Starting Mainnet Trading Bot with Mini App...');
       console.log('⚠️  MAINNET MODE: Using real funds and live trading');
       console.log('💰 Send USDC to your wallet to start trading');
+      
+      // Start the Mini App server
+      this.miniAppServer.start(3001);
       
       // Start the Telegram bot
       this.telegramBot.start();
       
       console.log('✅ Mainnet Trading Bot started successfully!');
-      console.log('📱 Send /start to your Telegram bot to begin trading');
+      console.log('📱 Send /start to your Telegram bot to begin');
+      console.log(`🌐 Mini App available at: ${process.env.MINIAPP_URL || 'http://localhost:3001'}`);
       
       // Set up graceful shutdown
       this.setupGracefulShutdown();

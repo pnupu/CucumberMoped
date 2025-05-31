@@ -26,6 +26,9 @@ export class DatabaseService {
           username TEXT,
           wallet_address TEXT NOT NULL UNIQUE,
           encrypted_private_key TEXT NOT NULL,
+          world_id_verified BOOLEAN DEFAULT FALSE,
+          world_id_nullifier_hash TEXT,
+          world_id_proof TEXT,
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
           updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
@@ -94,6 +97,9 @@ export class DatabaseService {
               username: row.username,
               walletAddress: row.wallet_address,
               encryptedPrivateKey: row.encrypted_private_key,
+              worldIdVerified: Boolean(row.world_id_verified),
+              worldIdNullifierHash: row.world_id_nullifier_hash,
+              worldIdProof: row.world_id_proof,
               createdAt: new Date(row.created_at),
               updatedAt: new Date(row.updated_at)
             });
@@ -126,6 +132,50 @@ export class DatabaseService {
         function(err) {
           if (err) reject(err);
           else resolve();
+        }
+      );
+    });
+  }
+
+  // World ID verification operations
+  async updateUserWorldIdVerification(
+    telegramId: number, 
+    verified: boolean, 
+    nullifierHash?: string, 
+    proof?: string
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      this.db.run(
+        `UPDATE users SET 
+         world_id_verified = ?, 
+         world_id_nullifier_hash = ?, 
+         world_id_proof = ?,
+         updated_at = CURRENT_TIMESTAMP 
+         WHERE telegram_id = ?`,
+        [verified, nullifierHash, proof, telegramId],
+        function(err) {
+          if (err) reject(err);
+          else resolve();
+        }
+      );
+    });
+  }
+
+  async getUserWorldIdStatus(telegramId: number): Promise<{verified: boolean, nullifierHash?: string} | null> {
+    return new Promise((resolve, reject) => {
+      this.db.get(
+        'SELECT world_id_verified, world_id_nullifier_hash FROM users WHERE telegram_id = ?',
+        [telegramId],
+        (err, row: any) => {
+          if (err) reject(err);
+          else if (row) {
+            resolve({
+              verified: Boolean(row.world_id_verified),
+              nullifierHash: row.world_id_nullifier_hash
+            });
+          } else {
+            resolve(null);
+          }
         }
       );
     });

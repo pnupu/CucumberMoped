@@ -3,6 +3,10 @@ export interface User {
   username?: string;
   walletAddress: string;
   encryptedPrivateKey: string;
+  // World ID verification fields
+  worldIdVerified: boolean;
+  worldIdNullifierHash?: string;
+  worldIdProof?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -106,4 +110,35 @@ export interface IOneInchService {
   getOrderStatus(orderId: string): Promise<string>;
   estimateGas(params: OneInchQuoteParams): Promise<string>;
   isValidTokenAddress(address: string): boolean;
+}
+
+// World ID interfaces
+export interface WorldIdVerificationParams {
+  action: string;
+  signal?: string;
+}
+
+export interface WorldIdProof {
+  nullifier_hash: string;
+  merkle_root: string;
+  proof: string;
+  verification_level: 'orb' | 'device';
+}
+
+export interface WorldIdVerificationResult {
+  success: boolean;
+  proof?: WorldIdProof;
+  error?: string;
+}
+
+export interface IWorldIdService {
+  initializeVerification(userId: number, action?: string): Promise<string>;
+  verifyProof(proof: WorldIdProof, userId: number): Promise<WorldIdVerificationResult>;
+  isUserVerified(userId: number): Promise<boolean>;
+  generateWorldIdUrl(userId: number, action?: string): Promise<string>;
+  getVerificationUrlString(userId: number, action?: string): string;
+  generateVerificationQRCode(userId: number, action?: string): Promise<string>;
+  generateVerificationQRCodeBase64(userId: number, action?: string): Promise<string>;
+  generateVerificationQRCodeSVG(userId: number, action?: string): Promise<string>;
+  generateVerificationQRCodeBuffer(userId: number, action?: string): Promise<Buffer>;
 } 
