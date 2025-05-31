@@ -1,5 +1,5 @@
 import sqlite3 from 'sqlite3';
-import { User, Transaction, TokenBalance } from '../types';
+import { User, Transaction, TokenBalance, HederaTopic, HederaMessage } from '../types';
 import path from 'path';
 import fs from 'fs';
 
@@ -62,6 +62,37 @@ export class DatabaseService {
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
           updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
           FOREIGN KEY (user_id) REFERENCES users (telegram_id)
+        )
+      `);
+
+      // Hedera topics table
+      this.db.run(`
+        CREATE TABLE IF NOT EXISTS hedera_topics (
+          id TEXT PRIMARY KEY,
+          topic_id TEXT NOT NULL UNIQUE,
+          memo TEXT NOT NULL,
+          user_id INTEGER NOT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (user_id) REFERENCES users (telegram_id)
+        )
+      `);
+
+      // Hedera messages table
+      this.db.run(`
+        CREATE TABLE IF NOT EXISTS hedera_messages (
+          id TEXT PRIMARY KEY,
+          topic_id TEXT NOT NULL,
+          sequence_number INTEGER NOT NULL,
+          message TEXT NOT NULL,
+          user_id INTEGER NOT NULL,
+          consensus_timestamp DATETIME,
+          running_hash TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (user_id) REFERENCES users (telegram_id),
+          FOREIGN KEY (topic_id) REFERENCES hedera_topics (topic_id),
+          UNIQUE(topic_id, sequence_number)
         )
       `);
     });
@@ -277,5 +308,196 @@ export class DatabaseService {
 
   close(): void {
     this.db.close();
+  }
+
+  // Hedera topic operations
+  async createHederaTopic(topic: HederaTopic): Promise<void> {
+    return new Promise((resolve, reject) => {
+      this.db.run(
+        `INSERT INTO hedera_topics (id, topic_id, memo, user_id) VALUES (?, ?, ?, ?)`,
+        [topic.id, topic.topicId, topic.memo, topic.userId],
+        function(err) {
+          if (err) reject(err);
+          else resolve();
+        }
+      );
+    });
+  }
+
+  async getHederaTopic(topicId: string): Promise<HederaTopic | null> {
+    return new Promise((resolve, reject) => {
+      this.db.get(
+        'SELECT * FROM hedera_topics WHERE topic_id = ?',
+        [topicId],
+        (err, row: any) => {
+          if (err) reject(err);
+          else if (row) {
+            resolve({
+              id: row.id,
+              topicId: row.topic_id,
+              memo: row.memo,
+              userId: row.user_id,
+              createdAt: new Date(row.created_at),
+              updatedAt: new Date(row.updated_at)
+            });
+          } else {
+            resolve(null);
+          }
+        }
+      );
+    });
+  }
+
+  async getUserHederaTopics(userId: number): Promise<HederaTopic[]> {
+    return new Promise((resolve, reject) => {
+      this.db.all(
+        'SELECT * FROM hedera_topics WHERE user_id = ? ORDER BY created_at DESC',
+        [userId],
+        (err, rows: any[]) => {
+          if (err) reject(err);
+          else {
+            const topics = rows.map(row => ({
+              id: row.id,
+              topicId: row.topic_id,
+              memo: row.memo,
+              userId: row.user_id,
+              createdAt: new Date(row.created_at),
+              updatedAt: new Date(row.updated_at)
+            }));
+            resolve(topics);
+          }
+        }
+      );
+    });
+  }
+
+  // Hedera message operations
+  async createHederaMessage(message: HederaMessage): Promise<void> {
+    return new Promise((resolve, reject) => {
+      this.db.run(
+        `INSERT INTO hedera_messages 
+         (id, topic_id, sequence_number, message, user_id, consensus_timestamp, running_hash) 
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          message.id,
+          message.topicId,
+          message.sequenceNumber,
+          message.message,
+          message.userId,
+          message.consensusTimestamp?.toISOString(),
+          message.runningHash
+        ],
+        function(err) {
+          if (err) reject(err);
+          else resolve();
+        }
+      );
+    });
+  }
+
+  async getHederaMessage(messageId: string): Promise<HederaMessage | null> {
+    return new Promise((resolve, reject) => {
+      this.db.get(
+        'SELECT * FROM hedera_messages WHERE id = ?',
+        [messageId],
+        (err, row: any) => {
+          if (err) reject(err);
+          else if (row) {
+            resolve({
+              id: row.id,
+              topicId: row.topic_id,
+              sequenceNumber: row.sequence_number,
+              message: row.message,
+              userId: row.user_id,
+              consensusTimestamp: row.consensus_timestamp ? new Date(row.consensus_timestamp) : undefined,
+              runningHash: row.running_hash,
+              createdAt: new Date(row.created_at),
+              updatedAt: new Date(row.updated_at)
+            });
+          } else {
+            resolve(null);
+          }
+        }
+      );
+    });
+  }
+
+  async getTopicMessages(topicId: string, limit: number = 50): Promise<HederaMessage[]> {
+    return new Promise((resolve, reject) => {
+      this.db.all(
+        'SELECT * FROM hedera_messages WHERE topic_id = ? ORDER BY sequence_number ASC LIMIT ?',
+        [topicId, limit],
+        (err, rows: any[]) => {
+          if (err) reject(err);
+          else {
+            const messages = rows.map(row => ({
+              id: row.id,
+              topicId: row.topic_id,
+              sequenceNumber: row.sequence_number,
+              message: row.message,
+              userId: row.user_id,
+              consensusTimestamp: row.consensus_timestamp ? new Date(row.consensus_timestamp) : undefined,
+              runningHash: row.running_hash,
+              createdAt: new Date(row.created_at),
+              updatedAt: new Date(row.updated_at)
+            }));
+            resolve(messages);
+          }
+        }
+      );
+    });
+  }
+
+  async getUserHederaMessages(userId: number, limit: number = 50): Promise<HederaMessage[]> {
+    return new Promise((resolve, reject) => {
+      this.db.all(
+        'SELECT * FROM hedera_messages WHERE user_id = ? ORDER BY created_at DESC LIMIT ?',
+        [userId, limit],
+        (err, rows: any[]) => {
+          if (err) reject(err);
+          else {
+            const messages = rows.map(row => ({
+              id: row.id,
+              topicId: row.topic_id,
+              sequenceNumber: row.sequence_number,
+              message: row.message,
+              userId: row.user_id,
+              consensusTimestamp: row.consensus_timestamp ? new Date(row.consensus_timestamp) : undefined,
+              runningHash: row.running_hash,
+              createdAt: new Date(row.created_at),
+              updatedAt: new Date(row.updated_at)
+            }));
+            resolve(messages);
+          }
+        }
+      );
+    });
+  }
+
+  async getMessageBySequence(topicId: string, sequenceNumber: number): Promise<HederaMessage | null> {
+    return new Promise((resolve, reject) => {
+      this.db.get(
+        'SELECT * FROM hedera_messages WHERE topic_id = ? AND sequence_number = ?',
+        [topicId, sequenceNumber],
+        (err, row: any) => {
+          if (err) reject(err);
+          else if (row) {
+            resolve({
+              id: row.id,
+              topicId: row.topic_id,
+              sequenceNumber: row.sequence_number,
+              message: row.message,
+              userId: row.user_id,
+              consensusTimestamp: row.consensus_timestamp ? new Date(row.consensus_timestamp) : undefined,
+              runningHash: row.running_hash,
+              createdAt: new Date(row.created_at),
+              updatedAt: new Date(row.updated_at)
+            });
+          } else {
+            resolve(null);
+          }
+        }
+      );
+    });
   }
 } 
