@@ -125,7 +125,7 @@ function App() {
             <IDKitWidget
               app_id={WORLD_ID_APP_ID}
               action={WORLD_ID_ACTION}
-              // signal={user.id.toString()} // Temporarily remove signal to test
+              verification_level="device"
               onSuccess={handleVerificationSuccess}
               onError={(error) => {
                 console.error('World ID error:', error)
