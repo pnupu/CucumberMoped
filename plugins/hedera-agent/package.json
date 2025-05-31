@@ -1,0 +1,19 @@
+{
+  "name": "cucumbermoped-hedera-plugin",
+  "version": "1.0.0",
+  "description": "CucumberMoped trading and portfolio management plugin for Hedera Agent Kit",
+  "main": "index.js",
+  "author": "CucumberMoped Team",
+  "license": "MIT",
+  "keywords": [
+    "hedera",
+    "trading",
+    "portfolio",
+    "cucumbermoped",
+    "agent-kit"
+  ],
+  "peerDependencies": {
+    "@langchain/core": "^0.3.0",
+    "zod": "^3.22.0"
+  }
+} 

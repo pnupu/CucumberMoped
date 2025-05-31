@@ -10,6 +10,7 @@ import { WorldIdService } from './services/WorldIdService';
 import { MiniAppServer } from './server/miniapp-server';
 import { HederaService } from './services/HederaService';
 import { StrategyService } from './services/StrategyService';
+import { HederaAgentService } from './services/HederaAgentService';
 
 // Load environment variables
 dotenv.config();
@@ -26,6 +27,7 @@ class TradingBotApp {
   private miniAppServer: MiniAppServer;
   private hederaService: HederaService;
   private strategyService: StrategyService;
+  private hederaAgentService: HederaAgentService;
 
   constructor() {
     console.log('🚀 Starting Mainnet Trading Bot with Telegram Mini App...');
@@ -73,15 +75,33 @@ class TradingBotApp {
     // Initialize Strategy service
     this.strategyService = new StrategyService();
 
+    // Initialize Hedera Agent service first (without telegramBot reference)
+    this.hederaAgentService = new HederaAgentService(
+      this.hederaService,
+      undefined as any, // Will be set later
+      this.strategyService,
+      this.db,
+      this.walletService,
+      {
+        operatorAccountId: process.env.HEDERA_TESTNET_ACCOUNT_ID!,
+        operatorPrivateKey: process.env.HEDERA_TESTNET_PRIVATE_KEY!,
+        network: 'testnet',
+        openAIApiKey: process.env.OPENAI_API_KEY,
+        operationalMode: 'provideBytes',
+        verbose: false
+      }
+    );
+
     this.telegramBot = new TelegramBotService(
       process.env.TELEGRAM_BOT_TOKEN!,
       this.db,
       this.walletService,
-      this.oneInchLimitOrderService, // Use the limit order service instead of regular OneInch service
+      this.oneInchLimitOrderService,
       this.blockchainService,
       this.worldIdService,
       this.hederaService,
-      this.strategyService
+      this.strategyService,
+      this.hederaAgentService
     );
     
     // Initialize Mini App server
@@ -101,6 +121,10 @@ class TradingBotApp {
       'COINMARKETCAP_PRO_KEY'
     ];
 
+    const optionalVars = [
+      'OPENAI_API_KEY' // Optional for AI agent functionality
+    ];
+
     const missing = requiredVars.filter(varName => !process.env[varName]);
     
     if (missing.length > 0) {
@@ -112,7 +136,17 @@ class TradingBotApp {
       console.error('  - Action: identity-verification (configured in your World ID app)');
       console.error('\nFor Mini App:');
       console.error('  - MINIAPP_URL: HTTPS URL for the Telegram Mini App (use ngrok for local development)');
+      console.error('\nFor Hedera Agent:');
+      console.error('  - OPENAI_API_KEY: OpenAI API key for AI agent functionality (optional)');
       process.exit(1);
+    }
+
+    // Check optional vars and warn if missing
+    const missingOptional = optionalVars.filter(varName => !process.env[varName]);
+    if (missingOptional.length > 0) {
+      console.warn('⚠️  Optional environment variables not set:');
+      missingOptional.forEach(varName => console.warn(`  - ${varName}`));
+      console.warn('Some features may be limited without these variables.');
     }
 
     // Validate encryption key length (should be 64 hex characters for 256-bit key)
@@ -134,41 +168,66 @@ class TradingBotApp {
 
   public async start(): Promise<void> {
     try {
-      console.log('🚀 Starting Mainnet Trading Bot with Mini App...');
-      console.log('⚠️  MAINNET MODE: Using real funds and live trading');
-      console.log('💰 Send USDC to your wallet to start trading');
+      console.log('🔄 Starting services...');
       
-      // Start the Mini App server
-      this.miniAppServer.start();
-      
-      // Start the Telegram bot
+      // Start Telegram bot
       this.telegramBot.start();
-      
-      console.log('✅ Mainnet Trading Bot started successfully!');
+
+      // Initialize Hedera Agent Service
+      console.log('🤖 Initializing Hedera AI Agent...');
+      try {
+        await this.hederaAgentService.initialize();
+        console.log('✅ Hedera AI Agent initialized successfully');
+      } catch (error) {
+        console.warn('⚠️  Hedera AI Agent initialization failed:', error instanceof Error ? error.message : 'Unknown error');
+        console.warn('AI agent features will be limited');
+      }
+
+      // Start Mini App server
+      console.log('📱 Starting Mini App server...');
+      await this.miniAppServer.start();
+
+      console.log('✅ All services started successfully!');
+      console.log('🌍 World ID verification available via Mini App');
+      console.log('💰 Primary trading token: USDC on Base');
+      console.log('🎯 Limit orders with Pyth pricing enabled');
+      console.log('🤖 AI Agent for Hedera operations available');
+      console.log('🥒 CucumberMoped Index with Strategy Service ready');
+      console.log(`📱 Mini App URL: ${process.env.MINIAPP_URL || 'http://localhost:3001'}`);
       console.log('📱 Send /start to your Telegram bot to begin');
-      console.log(`🌐 Mini App available at: ${process.env.MINIAPP_URL || 'http://localhost:3001'}`);
+      console.log('🤖 Try /ai commands to interact with the Hedera AI Agent');
       
       // Set up graceful shutdown
       this.setupGracefulShutdown();
       
     } catch (error) {
-      console.error('❌ Failed to start Trading Bot:', error);
-      process.exit(1);
+      console.error('❌ Failed to start application:', error);
+      throw error;
     }
   }
 
   private setupGracefulShutdown(): void {
     const shutdown = async (signal: string) => {
-      console.log(`\n🛑 Received ${signal}, shutting down gracefully...`);
+      console.log(`\n🛑 Received ${signal}. Shutting down gracefully...`);
       
       try {
-        // Stop Telegram bot
+        // Stop the Telegram bot
         this.telegramBot.stop();
         
-        // Close database connection
-        await this.db.close();
+        // Shutdown AI agent
+        if (this.hederaAgentService) {
+          await this.hederaAgentService.shutdown();
+        }
         
-        console.log('✅ Shutdown complete');
+        // Close Hedera client
+        if (this.hederaService) {
+          this.hederaService.close();
+        }
+        
+        // Close database connection
+        await this.db.prisma.$disconnect();
+        
+        console.log('✅ Graceful shutdown completed');
         process.exit(0);
       } catch (error) {
         console.error('❌ Error during shutdown:', error);
@@ -176,21 +235,8 @@ class TradingBotApp {
       }
     };
 
-    // Handle various shutdown signals
-    process.on('SIGTERM', () => shutdown('SIGTERM'));
     process.on('SIGINT', () => shutdown('SIGINT'));
-    process.on('SIGUSR2', () => shutdown('SIGUSR2')); // nodemon restart
-    
-    // Handle uncaught exceptions
-    process.on('uncaughtException', (error) => {
-      console.error('❌ Uncaught Exception:', error);
-      shutdown('uncaughtException');
-    });
-    
-    process.on('unhandledRejection', (reason, promise) => {
-      console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
-      shutdown('unhandledRejection');
-    });
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
   }
 }
 

@@ -14,6 +14,7 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "test:hedera": "ts-node src/test-hedera.ts",
     "test:hedera-real": "ts-node src/test-hedera-real.ts",
+    "test:hedera-agent": "ts-node src/test-hedera-agent.ts",
     "test:strategy": "ts-node src/test-strategy-hedera.ts",
     "test:strategy-cmc": "ts-node src/test-strategy-hedera.ts --cmc-only",
     "test:merit": "ts-node src/test-merit-distribution.ts",
@@ -41,6 +42,10 @@
     "@1inch/limit-order-protocol-utils": "^4.0.1",
     "@blockscout/app-sdk": "^0.1.0",
     "@hashgraph/sdk": "^2.48.1",
+    "@hashgraphonline/hedera-agent-kit": "^0.0.23",
+    "@hashgraphonline/standards-agent-kit": "^0.0.32",
+    "@langchain/core": "^0.3.57",
+    "@langchain/openai": "^0.5.11",
     "@prisma/client": "^6.8.2",
     "@pythnetwork/hermes-client": "^2.0.0",
     "@types/express": "^5.0.2",
@@ -58,7 +63,8 @@
     "prisma": "^6.8.2",
     "qrcode": "^1.5.4",
     "sqlite3": "^5.1.7",
-    "web3": "^4.3.0"
+    "web3": "^4.3.0",
+    "zod": "^3.25.42"
   },
   "devDependencies": {
     "@types/bcrypt": "^5.0.2",

@@ -6,6 +6,7 @@ import { WorldIdService } from './WorldIdService';
 import { HederaService } from './HederaService';
 import { StrategyService } from './StrategyService';
 import { MeritEligibilityService } from './meritEligibilityService';
+import { HederaAgentService, ChatMessage } from './HederaAgentService';
 import { IOneInchServiceWithLimitOrders, OneInchQuoteParams, HederaTopic, HederaMessage, LimitOrderCreationParams } from '../types';
 
 import { getTokenBySymbol, getTokensByChain, CHAIN_NAMES, SUPPORTED_TOKENS } from '../config/tokens';
@@ -20,8 +21,10 @@ export class TelegramBotService {
   private worldIdService?: WorldIdService;
   private hederaService?: HederaService;
   private strategyService?: StrategyService;
+  private hederaAgentService?: HederaAgentService;
   private meritEligibilityService: MeritEligibilityService;
   private quoteStorage: Map<string, OneInchQuoteParams> = new Map();
+  private chatHistories: Map<number, ChatMessage[]> = new Map(); // Store chat histories by user ID
 
   constructor(
     token: string,
@@ -31,7 +34,8 @@ export class TelegramBotService {
     blockchainService?: BlockchainService,
     worldIdService?: WorldIdService,
     hederaService?: HederaService,
-    strategyService?: StrategyService
+    strategyService?: StrategyService,
+    hederaAgentService?: HederaAgentService
   ) {
     this.bot = new TelegramBot(token, { polling: true });
     this.db = db;
@@ -41,6 +45,7 @@ export class TelegramBotService {
     this.worldIdService = worldIdService;
     this.hederaService = hederaService;
     this.strategyService = strategyService;
+    this.hederaAgentService = hederaAgentService;
     this.meritEligibilityService = new MeritEligibilityService(db.prisma);
 
     this.setupCommands();
@@ -87,6 +92,8 @@ export class TelegramBotService {
       { command: 'history', description: 'Show transaction history' },
       { command: 'meriteligibility', description: 'Check Blockscout merit eligibility status' },
       { command: 'testindex', description: 'Test CucumberMoped Index (Hedera + Strategy)' },
+      { command: 'ai', description: 'Chat with Hedera AI Agent (e.g. /ai What is my portfolio?)' },
+      { command: 'aihelp', description: 'Get help about AI agent capabilities' },
       { command: 'help', description: 'Show help' }
     ]);
   }
@@ -1377,6 +1384,10 @@ Ready to verify? 🚀`;
 /pythall - Get all Pyth EMA prices at once
 /pythcompare - Compare Pyth prices over 10 seconds
 
+**🤖 AI Agent Commands:**
+/ai [message] - Chat with Hedera AI Agent for portfolio analysis and operations
+/aihelp - Get detailed help about AI agent capabilities
+
 **Wallet & Info:**
 /wallet - Show wallet information
 /tokens - Show supported tokens
@@ -1397,6 +1408,12 @@ Ready to verify? 🚀`;
 • One verification per person globally
 • Trading works without verification
 
+**🤖 AI Agent Examples:**
+\`/ai What's my current portfolio allocation?\`
+\`/ai Submit my portfolio to Hedera topic 0.0.123456\`
+\`/ai Create a new topic for storing messages\`
+\`/ai Check user 123456 merit eligibility\`
+
 **Examples:**
 \`/quote 10 USDC DEGEN\` - Quote + instant buy option (Base)
 \`/quote 50 USDC PEPE\` - Quote + instant buy (cross-chain)
@@ -1411,9 +1428,128 @@ Ready to verify? 🚀`;
 💰 USDC on Base is the primary trading token
 ⚡ Base network offers lower fees
 🏆 Merit eligibility for verified humans
+🤖 AI-powered Hedera operations and portfolio management
       `;
       
       this.bot.sendMessage(chatId, helpText, { parse_mode: 'Markdown' });
+    });
+
+    // AI Help command
+    this.bot.onText(/\/aihelp/, (msg) => {
+      const chatId = msg.chat.id;
+      
+      if (!this.hederaAgentService) {
+        this.bot.sendMessage(chatId, '❌ AI Agent service is not available.');
+        return;
+      }
+      
+      const capabilities = this.hederaAgentService.getCapabilities();
+      const suggestions = this.hederaAgentService.generateSuggestions();
+      
+      const helpText = `${capabilities}
+
+**💡 Suggested Commands:**
+${suggestions.map(s => `• "${s}"`).join('\n')}
+
+**Usage:**
+Send \`/ai [your message]\` to chat with the AI agent.
+
+**Examples:**
+\`/ai What's my portfolio allocation?\`
+\`/ai Submit portfolio to topic 0.0.123456\`
+\`/ai Create a topic for my data\`
+\`/ai Check Hedera connectivity\``;
+      
+      this.bot.sendMessage(chatId, helpText, { parse_mode: 'Markdown' });
+    });
+
+    // AI Chat command
+    this.bot.onText(/\/ai (.+)/, async (msg, match) => {
+      const chatId = msg.chat.id;
+      const userId = msg.from?.id;
+      const userMessage = match?.[1];
+
+      if (!userId || !userMessage) {
+        return;
+      }
+
+      if (!this.hederaAgentService) {
+        this.bot.sendMessage(chatId, '❌ AI Agent service is not available. Please check that OpenAI API key is configured.');
+        return;
+      }
+
+      try {
+        const user = await this.db.getUser(userId);
+        
+        // Get or initialize chat history for this user
+        let chatHistory = this.chatHistories.get(userId) || [];
+        
+        this.bot.sendAnimation(chatId, './cucumber_moped_processing.gif');
+
+        // Prepare user context
+        const userContext = user ? {
+          userId: userId,
+          username: msg.from?.username,
+          accountId: user.walletAddress, // Using wallet address as account context
+          isVerified: user.worldIdVerified
+        } : {
+          userId: userId,
+          username: msg.from?.username,
+          isVerified: false
+        };
+
+        // Process with AI agent
+        const response = await this.hederaAgentService.processMessage(
+          userMessage,
+          chatHistory,
+          userContext
+        );
+
+        // Update chat history
+        chatHistory.push({ type: 'human', content: userMessage });
+        chatHistory.push({ type: 'ai', content: response.output });
+        
+        // Limit chat history to last 20 messages
+        if (chatHistory.length > 20) {
+          chatHistory = chatHistory.slice(-20);
+        }
+        
+        this.chatHistories.set(userId, chatHistory);
+
+        // Send the AI response
+        this.bot.sendMessage(chatId, response.output, { parse_mode: 'Markdown' });
+
+        // Handle any transaction bytes or schedules
+        if (response.transactionBytes) {
+          this.bot.sendMessage(chatId, 
+            '📝 **Transaction Prepared**\n\n' +
+            'The AI agent has prepared a transaction for you. ' +
+            'You would need to sign this with your wallet to execute it.\n\n' +
+            '💡 This is a preview - full transaction signing integration coming soon!'
+          );
+        }
+
+        if (response.scheduleId) {
+          this.bot.sendMessage(chatId, 
+            `📅 **Transaction Scheduled**\n\n` +
+            `Schedule ID: \`${response.scheduleId}\`\n\n` +
+            'The transaction has been scheduled on Hedera and is waiting for signatures.',
+            { parse_mode: 'Markdown' }
+          );
+        }
+
+        if (response.error) {
+          this.bot.sendMessage(chatId, 
+            `⚠️ **Note:** ${response.error}`
+          );
+        }
+
+      } catch (error) {
+        console.error('Error in AI chat:', error);
+        this.bot.sendMessage(chatId, 
+          '❌ Sorry, I encountered an error processing your request. Please try again or use /aihelp for guidance.'
+        );
+      }
     });
 
     // TestIndex command - CucumberMoped Index management with Hedera + Strategy
