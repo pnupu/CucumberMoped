@@ -133,7 +133,7 @@ export class MiniAppServer {
     });
   }
 
-  public start(port: number = 3001): void {
+  public start(port: number = parseInt(process.env.PORT || '3001')): void {
     this.app.listen(port, () => {
       console.log(`🚀 Mini App server running on port ${port}`);
       console.log(`📱 Main Mini App URL: http://localhost:${port}`);

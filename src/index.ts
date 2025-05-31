@@ -139,7 +139,7 @@ class TradingBotApp {
       console.log('💰 Send USDC to your wallet to start trading');
       
       // Start the Mini App server
-      this.miniAppServer.start(3001);
+      this.miniAppServer.start();
       
       // Start the Telegram bot
       this.telegramBot.start();
