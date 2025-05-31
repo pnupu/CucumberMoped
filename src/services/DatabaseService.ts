@@ -45,6 +45,7 @@ export class DatabaseService {
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           user_id INTEGER NOT NULL,
           token_address TEXT NOT NULL,
+          
           token_symbol TEXT NOT NULL,
           balance TEXT NOT NULL,
           chain_id INTEGER NOT NULL,

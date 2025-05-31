@@ -1,0 +1,160 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  telegramId            Int       @id @map("telegram_id")
+  username              String?
+  walletAddress         String    @unique @map("wallet_address")
+  encryptedPrivateKey   String    @map("encrypted_private_key")
+  worldIdVerified       Boolean   @default(false) @map("world_id_verified")
+  worldIdNullifierHash  String?   @map("world_id_nullifier_hash")
+  worldIdProof          String?   @map("world_id_proof")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  // Relations
+  tokenBalances    TokenBalance[]
+  transactions     Transaction[]
+  hederaTopics     HederaTopic[]
+  hederaMessages   HederaMessage[]
+  tradingVolumes   TradingVolume[]
+  meritDistributions MeritDistribution[]
+
+  @@map("users")
+}
+
+model TokenBalance {
+  id           Int      @id @default(autoincrement())
+  userId       Int      @map("user_id")
+  tokenAddress String   @map("token_address")
+  tokenSymbol  String   @map("token_symbol")
+  balance      String
+  chainId      Int      @map("chain_id")
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at")
+
+  // Relations
+  user User @relation(fields: [userId], references: [telegramId])
+
+  @@unique([userId, tokenAddress, chainId])
+  @@map("token_balances")
+}
+
+model Transaction {
+  id         String            @id
+  userId     Int               @map("user_id")
+  type       TransactionType
+  fromToken  String            @map("from_token")
+  toToken    String            @map("to_token")
+  fromAmount String            @map("from_amount")
+  toAmount   String?           @map("to_amount")
+  chainId    Int               @map("chain_id")
+  status     TransactionStatus
+  txHash     String?           @map("tx_hash")
+  createdAt  DateTime          @default(now()) @map("created_at")
+  updatedAt  DateTime          @default(now()) @updatedAt @map("updated_at")
+
+  // Relations
+  user User @relation(fields: [userId], references: [telegramId])
+
+  @@map("transactions")
+}
+
+model TradingVolume {
+  id            Int      @id @default(autoincrement())
+  userId        Int      @map("user_id")
+  walletAddress String   @map("wallet_address")
+  usdcVolume    String   @map("usdc_volume") // Stored as string to handle precise decimals
+  date          DateTime @map("date") // Date for which this volume is recorded
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at")
+
+  // Relations
+  user User @relation(fields: [userId], references: [telegramId])
+
+  @@unique([userId, date])
+  @@index([date, usdcVolume])
+  @@map("trading_volumes")
+}
+
+model MeritDistribution {
+  id                String   @id @default(uuid())
+  userId            Int      @map("user_id")
+  walletAddress     String   @map("wallet_address")
+  distributionId    String   @map("distribution_id") // Unique ID sent to Blockscout API
+  amount            String   @map("amount") // Merit amount distributed
+  usdcVolume        String   @map("usdc_volume") // USDC volume that earned this merit
+  date              DateTime @map("date") // Date for which merits were distributed
+  blockscoutTxId    String?  @map("blockscout_tx_id") // Response from Blockscout API
+  status            MeritDistributionStatus @default(pending)
+  errorMessage      String?  @map("error_message")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @default(now()) @updatedAt @map("updated_at")
+
+  // Relations
+  user User @relation(fields: [userId], references: [telegramId])
+
+  @@unique([distributionId])
+  @@index([date, status])
+  @@map("merit_distributions")
+}
+
+model HederaTopic {
+  id        String   @id
+  topicId   String   @unique @map("topic_id")
+  memo      String
+  userId    Int      @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  // Relations
+  user     User            @relation(fields: [userId], references: [telegramId])
+  messages HederaMessage[]
+
+  @@map("hedera_topics")
+}
+
+model HederaMessage {
+  id                 String    @id
+  topicId            String    @map("topic_id")
+  sequenceNumber     Int       @map("sequence_number")
+  message            String
+  userId             Int       @map("user_id")
+  consensusTimestamp DateTime? @map("consensus_timestamp")
+  runningHash        String?   @map("running_hash")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  // Relations
+  user  User        @relation(fields: [userId], references: [telegramId])
+  topic HederaTopic @relation(fields: [topicId], references: [topicId])
+
+  @@unique([topicId, sequenceNumber])
+  @@map("hedera_messages")
+}
+
+enum TransactionType {
+  deposit
+  withdraw
+  swap
+}
+
+enum TransactionStatus {
+  pending
+  completed
+  failed
+}
+
+enum MeritDistributionStatus {
+  pending
+  success
+  failed
+}

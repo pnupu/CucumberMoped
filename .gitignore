@@ -121,3 +121,4 @@ temp/
 
 # Local development files
 .local 
+/src/generated/prisma

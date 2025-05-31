@@ -17,7 +17,13 @@
     "test:hedera": "ts-node src/test-hedera.ts",
     "test:hedera-real": "ts-node src/test-hedera-real.ts",
     "test:strategy": "ts-node src/test-strategy-hedera.ts",
-    "test:strategy-cmc": "ts-node src/test-strategy-hedera.ts --cmc-only"
+    "test:strategy-cmc": "ts-node src/test-strategy-hedera.ts --cmc-only",
+    "test:merit": "ts-node src/test-merit-distribution.ts",
+    "prisma:generate": "prisma generate",
+    "prisma:studio": "prisma studio",
+    "prisma:migrate": "prisma migrate dev",
+    "migrate:to-prisma": "DATABASE_URL=\"file:./data/prisma-bot.db\" ts-node src/scripts/migrate-to-prisma.ts",
+    "test:prisma": "DATABASE_URL=\"file:./data/prisma-bot.db\" ts-node src/scripts/test-prisma.ts"
   },
   "keywords": [
     "telegram",
@@ -32,12 +38,13 @@
   "dependencies": {
     "@1inch/cross-chain-sdk": "0.1.15-rc.0",
     "@blockscout/app-sdk": "^0.1.0",
+    "@hashgraph/sdk": "^2.48.1",
+    "@prisma/client": "^6.8.2",
     "@types/express": "^5.0.2",
     "@types/qrcode": "^1.5.5",
     "@worldcoin/idkit": "^1.3.0",
     "@worldcoin/idkit-standalone": "^2.1.0",
     "@worldcoin/minikit-js": "^1.0.0",
-    "@hashgraph/sdk": "^2.48.1",
     "axios": "^1.6.2",
     "bcrypt": "^5.1.1",
     "cors": "^2.8.5",
@@ -45,6 +52,7 @@
     "ethers": "^6.13.4",
     "express": "^4.21.1",
     "node-telegram-bot-api": "^0.66.0",
+    "prisma": "^6.8.2",
     "qrcode": "^1.5.4",
     "sqlite3": "^5.1.7",
     "web3": "^4.3.0"
