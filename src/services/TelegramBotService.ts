@@ -314,7 +314,7 @@ Ready to verify? 🚀`;
 
           this.bot.sendMessage(chatId, 
             '🚫 **Verification Required**\n\n' +
-            'You must verify your humanity with World ID to use trading features.\n\n' +
+            'You must verify your humanity with World ID to use this feature.\n\n' +
             '**Why verification?**\n' +
             '• Prevents bot abuse\n' +
             '• Ensures fair access\n' +
