@@ -551,11 +551,14 @@ Ready to verify? 🚀`;
         const quote = await this.oneInchService.getQuote(quoteParams);
         const outputAmount = ethers.formatUnits(quote.toAmount, toToken.decimals);
 
+        // Store quote data and get short ID for callback (same as /quote command)
+        const quoteId = this.storeQuote(quoteParams);
+
         // Send confirmation with Base network highlighted
         const keyboard = {
           inline_keyboard: [
             [
-              { text: '✅ Confirm Purchase', callback_data: `confirm_buy_${JSON.stringify(quoteParams)}` },
+              { text: '✅ Confirm Purchase', callback_data: `buy_${quoteId}` },
               { text: '❌ Cancel', callback_data: 'cancel' }
             ]
           ]
@@ -2224,6 +2227,111 @@ Ready to verify? Download World App! 🚀`;
         }
       }
 
+      if (data.startsWith('buy_')) {
+        try {
+          const quoteId = data.replace('buy_', '');
+          const quoteParams = this.quoteStorage.get(quoteId);
+          
+          if (!quoteParams) {
+            await safeAnswerCallbackQuery('Quote expired! Get a new quote.');
+            await this.bot.editMessageText(
+              `❌ Quote Expired\n\n` +
+              `This quote has expired. Please use /buy to get a fresh quote.`,
+              {
+                chat_id: chatId,
+                message_id: query.message?.message_id
+              }
+            );
+            return;
+          }
+
+          const user = await this.db.getUser(userId);
+          if (!user) {
+            await safeAnswerCallbackQuery('User not found!');
+            return;
+          }
+
+          // Acknowledge the callback immediately
+          await safeAnswerCallbackQuery('Executing purchase...');
+
+          // Update message to show processing
+          await this.bot.editMessageText(
+            `⏳ Executing purchase...\n\n` +
+            `Please wait while we process your transaction.`,
+            {
+              chat_id: chatId,
+              message_id: query.message?.message_id
+            }
+          );
+
+          // Execute the trade
+          const orderResult = await this.oneInchService.placeOrder(
+            quoteParams,
+            user.encryptedPrivateKey
+          );
+
+          // Save transaction to database
+          const transaction = {
+            id: orderResult.orderId,
+            userId: userId,
+            type: 'swap' as const,
+            fromToken: quoteParams.srcTokenAddress,
+            toToken: quoteParams.dstTokenAddress,
+            fromAmount: quoteParams.amount,
+            chainId: quoteParams.srcChainId,
+            status: 'pending' as const,
+            createdAt: new Date(),
+            updatedAt: new Date()
+          };
+
+          await this.db.createTransaction(transaction);
+
+          // Get token info for display
+          const fromTokenInfo = SUPPORTED_TOKENS.find(t => 
+            t.address.toLowerCase() === quoteParams.srcTokenAddress.toLowerCase() && 
+            t.chainId === quoteParams.srcChainId
+          );
+          const toTokenInfo = SUPPORTED_TOKENS.find(t => 
+            t.address.toLowerCase() === quoteParams.dstTokenAddress.toLowerCase() && 
+            t.chainId === quoteParams.dstChainId
+          );
+
+          const fromAmount = fromTokenInfo ? 
+            ethers.formatUnits(quoteParams.amount, fromTokenInfo.decimals) : 
+            'Unknown';
+
+          // Clean up the stored quote
+          this.quoteStorage.delete(quoteId);
+
+          await this.bot.editMessageText(
+            `✅ Purchase Executed Successfully!\n\n` +
+            `Bought: ${toTokenInfo?.symbol || 'Unknown'}\n` +
+            `With: ${fromAmount} ${fromTokenInfo?.symbol || 'Unknown'}\n` +
+            `Network: ${CHAIN_NAMES[quoteParams.srcChainId] || 'Unknown'}\n\n` +
+            `Order ID: ${orderResult.orderId}\n` +
+            `Status: ${orderResult.status}\n\n` +
+            `🎉 Your purchase has been submitted to the blockchain!`,
+            {
+              chat_id: chatId,
+              message_id: query.message?.message_id
+            }
+          );
+
+        } catch (error) {
+          console.error('Error executing buy trade:', error);
+          
+          await this.bot.editMessageText(
+            `❌ Purchase Failed\n\n` +
+            `Error: ${error instanceof Error ? error.message : 'Unknown error'}\n\n` +
+            `Please try getting a new quote with /buy command.`,
+            {
+              chat_id: chatId,
+              message_id: query.message?.message_id
+            }
+          );
+        }
+      }
+
       if (data.startsWith('quote_')) {
         try {
           const quoteId = data.replace('quote_', '');
@@ -2417,6 +2525,130 @@ Ready to verify? Download World App! 🚀`;
           await safeAnswerCallbackQuery('Error checking verification status');
         }
         return;
+      }
+
+      // Legacy fallback for old confirm_buy_ callbacks (graceful degradation)
+      if (data.startsWith('confirm_buy_')) {
+        try {
+          await safeAnswerCallbackQuery('This quote has expired. Please use /buy to get a fresh quote.');
+          await this.bot.editMessageText(
+            `❌ Quote Expired\n\n` +
+            `This quote format is no longer supported. Please use /buy to get a fresh quote.`,
+            {
+              chat_id: chatId,
+              message_id: query.message?.message_id
+            }
+          );
+        } catch (error) {
+          console.error('Error handling legacy confirm_buy:', error);
+          await safeAnswerCallbackQuery('Please use /buy to get a fresh quote.');
+        }
+        return;
+      }
+
+      if (data.startsWith('buy_')) {
+        try {
+          const quoteId = data.replace('buy_', '');
+          const quoteParams = this.quoteStorage.get(quoteId);
+          
+          if (!quoteParams) {
+            await safeAnswerCallbackQuery('Quote expired! Get a new quote.');
+            await this.bot.editMessageText(
+              `❌ Quote Expired\n\n` +
+              `This quote has expired. Please use /buy to get a fresh quote.`,
+              {
+                chat_id: chatId,
+                message_id: query.message?.message_id
+              }
+            );
+            return;
+          }
+
+          const user = await this.db.getUser(userId);
+          if (!user) {
+            await safeAnswerCallbackQuery('User not found!');
+            return;
+          }
+
+          // Acknowledge the callback immediately
+          await safeAnswerCallbackQuery('Executing purchase...');
+
+          // Update message to show processing
+          await this.bot.editMessageText(
+            `⏳ Executing purchase...\n\n` +
+            `Please wait while we process your transaction.`,
+            {
+              chat_id: chatId,
+              message_id: query.message?.message_id
+            }
+          );
+
+          // Execute the trade
+          const orderResult = await this.oneInchService.placeOrder(
+            quoteParams,
+            user.encryptedPrivateKey
+          );
+
+          // Save transaction to database
+          const transaction = {
+            id: orderResult.orderId,
+            userId: userId,
+            type: 'swap' as const,
+            fromToken: quoteParams.srcTokenAddress,
+            toToken: quoteParams.dstTokenAddress,
+            fromAmount: quoteParams.amount,
+            chainId: quoteParams.srcChainId,
+            status: 'pending' as const,
+            createdAt: new Date(),
+            updatedAt: new Date()
+          };
+
+          await this.db.createTransaction(transaction);
+
+          // Get token info for display
+          const fromTokenInfo = SUPPORTED_TOKENS.find(t => 
+            t.address.toLowerCase() === quoteParams.srcTokenAddress.toLowerCase() && 
+            t.chainId === quoteParams.srcChainId
+          );
+          const toTokenInfo = SUPPORTED_TOKENS.find(t => 
+            t.address.toLowerCase() === quoteParams.dstTokenAddress.toLowerCase() && 
+            t.chainId === quoteParams.dstChainId
+          );
+
+          const fromAmount = fromTokenInfo ? 
+            ethers.formatUnits(quoteParams.amount, fromTokenInfo.decimals) : 
+            'Unknown';
+
+          // Clean up the stored quote
+          this.quoteStorage.delete(quoteId);
+
+          await this.bot.editMessageText(
+            `✅ Purchase Executed Successfully!\n\n` +
+            `Bought: ${toTokenInfo?.symbol || 'Unknown'}\n` +
+            `With: ${fromAmount} ${fromTokenInfo?.symbol || 'Unknown'}\n` +
+            `Network: ${CHAIN_NAMES[quoteParams.srcChainId] || 'Unknown'}\n\n` +
+            `Order ID: ${orderResult.orderId}\n` +
+            `Status: ${orderResult.status}\n\n` +
+            `🎉 Your purchase has been submitted to the blockchain!`,
+            {
+              chat_id: chatId,
+              message_id: query.message?.message_id
+            }
+          );
+
+        } catch (error) {
+          console.error('Error executing buy trade:', error);
+          
+          await this.bot.editMessageText(
+            `❌ Purchase Failed\n\n` +
+            `Error: ${error instanceof Error ? error.message : 'Unknown error'}\n\n` +
+            `Please try getting a new quote with /buy command.`,
+            {
+              chat_id: chatId,
+              message_id: query.message?.message_id
+            }
+          );
+        }
       }
     });
 

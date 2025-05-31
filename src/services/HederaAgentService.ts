@@ -82,6 +82,7 @@ export class HederaAgentService {
       // Use the JavaScript plugin structure that HederaAgentKit expects
       const { CucumberMopedPlugin } = require('../plugins/hedera-agent/CucumberMopedPlugin.js');
       
+      // Create plugin context with our services
       const pluginContext = {
         hederaService: this.hederaService,
         strategyService: this.strategyService,
@@ -90,7 +91,9 @@ export class HederaAgentService {
         telegramService: this.telegramService
       };
 
+      // Create plugin instance with context
       const cucumberPlugin = new CucumberMopedPlugin(pluginContext);
+      console.log('🥒 CucumberMoped plugin created');
       
       this.agentKit = new HederaAgentKit(
         this.signer,
@@ -275,20 +278,27 @@ export class HederaAgentService {
    * Create context-aware custom tools that have access to the current user context
    */
   private createContextAwareCustomTools(userContext?: { userId: number; username?: string; accountId?: string; isVerified?: boolean }): any[] {
-    // Dynamically import the plugin
-    const CucumberMopedPlugin = require('../plugins/hedera-agent/CucumberMopedPlugin.js');
-    
-    // Create plugin context with user context
-    const pluginContext = {
-      hederaService: this.hederaService,
-      strategyService: this.strategyService,
-      db: this.db,
-      walletService: this.walletService,
-      userContext: userContext // Pass user context to plugin
-    };
+    try {
+      // Use the already initialized custom tools from the main plugin
+      const storedTools = (this as any).customTools;
+      if (!storedTools || storedTools.length === 0) {
+        console.log('🥒 No custom tools available');
+        return [];
+      }
 
-    const plugin = new CucumberMopedPlugin(pluginContext);
-    return plugin.getTools();
+      // Update the userContext in the tools that need it
+      for (const tool of storedTools) {
+        if (tool.context) {
+          tool.context.userContext = userContext;
+        }
+      }
+
+      console.log(`🥒 Using ${storedTools.length} stored custom tools with user context:`, userContext?.userId);
+      return storedTools;
+    } catch (error) {
+      console.error('Error creating context-aware tools:', error);
+      return [];
+    }
   }
 
   /**
