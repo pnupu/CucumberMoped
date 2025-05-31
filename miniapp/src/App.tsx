@@ -3,8 +3,8 @@ import { IDKitWidget } from '@worldcoin/idkit'
 import './types/telegram.d.ts'
 
 // Configuration
-const WORLD_ID_APP_ID = 'app_staging_4f70c156cb934ff77b85aa6b901540a1'
-const WORLD_ID_ACTION = 'identity-verification'
+const WORLD_ID_APP_ID = import.meta.env.VITE_WORLDID_APP_ID
+const WORLD_ID_ACTION = import.meta.env.VITE_WORLDID_ACTION
 
 interface VerificationResult {
   success: boolean
