@@ -144,8 +144,6 @@ export class TelegramBotService {
           `Address: \`${wallet.address}\`\n\n` +
           `⚠️ *IMPORTANT:* Save this mnemonic phrase in a secure place:\n` +
           `\`${wallet.mnemonic}\`\n\n` +
-          `🌍 **Next Step: Verify your humanity**\n` +
-          `Use /verify to verify with World ID and unlock trading features.\n\n` +
           `Use /help to see available commands.`,
           { parse_mode: 'Markdown' }
         );
