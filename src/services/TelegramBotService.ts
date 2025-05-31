@@ -495,11 +495,6 @@ Ready to verify? 🚀`;
           return;
         }
 
-        // Check World ID verification before allowing trading
-        const isVerificationPassed = await checkWorldIdVerification(userId, chatId);
-        if (!isVerificationPassed) {
-          return; // Verification message already sent
-        }
 
         const parts = input.split(' ');
         let fromSymbol = 'USDC'; // Default to USDC
@@ -596,11 +591,6 @@ Ready to verify? 🚀`;
           return;
         }
 
-        // Check World ID verification before allowing trading
-        const isVerificationPassed = await checkWorldIdVerification(userId, chatId);
-        if (!isVerificationPassed) {
-          return; // Verification message already sent
-        }
 
         const parts = input.split(' ');
         if (parts.length !== 3) {
@@ -782,11 +772,6 @@ Ready to verify? 🚀`;
           return;
         }
 
-        // Check World ID verification
-        const isVerificationPassed = await checkWorldIdVerification(userId, chatId);
-        if (!isVerificationPassed) {
-          return;
-        }
 
         const parts = input.split(' ');
         if (parts.length !== 2) {
@@ -875,11 +860,6 @@ Ready to verify? 🚀`;
           return;
         }
 
-        // Check World ID verification
-        const isVerificationPassed = await checkWorldIdVerification(userId, chatId);
-        if (!isVerificationPassed) {
-          return;
-        }
 
         const parts = input.split(' ');
         if (parts.length !== 2) {
@@ -1186,11 +1166,6 @@ Ready to verify? 🚀`;
           return;
         }
 
-        // Check World ID verification
-        const isVerificationPassed = await checkWorldIdVerification(userId, chatId);
-        if (!isVerificationPassed) {
-          return;
-        }
 
         this.bot.sendMessage(chatId, '📋 Fetching your active limit orders...');
 
@@ -1243,11 +1218,6 @@ Ready to verify? 🚀`;
       if (!userId || !match) return;
 
       try {
-        // Check World ID verification
-        const isVerificationPassed = await checkWorldIdVerification(userId, chatId);
-        if (!isVerificationPassed) {
-          return;
-        }
 
         const orderHash = match[1].trim();
         
@@ -1337,6 +1307,12 @@ Ready to verify? 🚀`;
           return;
         }
 
+        // Check World ID verification before allowing merit eligibility check
+        const isVerificationPassed = await checkWorldIdVerification(userId, chatId);
+        if (!isVerificationPassed) {
+          return; // Verification message already sent
+        }
+
         // Show loading message
         this.bot.sendMessage(chatId, '🔍 Checking your merit eligibility...');
 
@@ -1371,13 +1347,10 @@ Ready to verify? 🚀`;
       const helpText = `
 🤖 **Trading Bot Help**
 
-🌍 **IMPORTANT: World ID Verification Required**
-This bot requires proof of humanhood to prevent abuse and ensure fair access for real users.
-
 **Getting Started:**
 1️⃣ /start - Create wallet or login
-2️⃣ /verify - Verify your humanity with World ID
-3️⃣ Start trading! 🚀
+2️⃣ Start trading immediately! 🚀
+3️⃣ /verify - Verify with World ID (for merit eligibility only)
 
 **Trading Commands:**
 /quote [amount] [token1] [token2] - Get live price quote + instant buy
@@ -1408,7 +1381,7 @@ This bot requires proof of humanhood to prevent abuse and ensure fair access for
 /wallet - Show wallet information
 /tokens - Show supported tokens
 /history - Show transaction history
-/meriteligibility - Check Blockscout merit eligibility status
+/meriteligibility - Check Blockscout merit eligibility status (🌍 World ID required)
 /testindex - 🥒 CucumberMoped Index (Hedera + Strategy test)
 
 **Quick Trading Workflow:**
@@ -1417,12 +1390,12 @@ This bot requires proof of humanhood to prevent abuse and ensure fair access for
 3️⃣ \`/orders\` - Check if your trade executed
 4️⃣ \`/balance\` - See updated balances
 
-**World ID Verification:**
-• Proves you're a unique human
-• Prevents bot abuse and spam
+**🌍 World ID Verification (Merit Eligibility Only):**
+• Required only for checking merit eligibility
+• Proves you're a unique human for fair merit distribution
 • No personal information required
-• One verification per person
-• Required for all trading features
+• One verification per person globally
+• Trading works without verification
 
 **Examples:**
 \`/quote 10 USDC DEGEN\` - Quote + instant buy option (Base)
@@ -1437,7 +1410,7 @@ This bot requires proof of humanhood to prevent abuse and ensure fair access for
 📊 Real-time order status tracking
 💰 USDC on Base is the primary trading token
 ⚡ Base network offers lower fees
-🌍 Human-verified trading with World ID
+🏆 Merit eligibility for verified humans
       `;
       
       this.bot.sendMessage(chatId, helpText, { parse_mode: 'Markdown' });
