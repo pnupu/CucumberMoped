@@ -5,6 +5,7 @@ import { BlockchainService } from './BlockchainService';
 import { WorldIdService } from './WorldIdService';
 import { HederaService } from './HederaService';
 import { StrategyService } from './StrategyService';
+import { MeritEligibilityService } from './meritEligibilityService';
 import { IOneInchServiceWithLimitOrders, OneInchQuoteParams, HederaTopic, HederaMessage, LimitOrderCreationParams } from '../types';
 
 import { getTokenBySymbol, getTokensByChain, CHAIN_NAMES, SUPPORTED_TOKENS } from '../config/tokens';
@@ -19,6 +20,7 @@ export class TelegramBotService {
   private worldIdService?: WorldIdService;
   private hederaService?: HederaService;
   private strategyService?: StrategyService;
+  private meritEligibilityService: MeritEligibilityService;
   private quoteStorage: Map<string, OneInchQuoteParams> = new Map();
 
   constructor(
@@ -39,6 +41,7 @@ export class TelegramBotService {
     this.worldIdService = worldIdService;
     this.hederaService = hederaService;
     this.strategyService = strategyService;
+    this.meritEligibilityService = new MeritEligibilityService(db.prisma);
 
     this.setupCommands();
     this.setupCallbackHandlers();
@@ -82,6 +85,7 @@ export class TelegramBotService {
       { command: 'tokens', description: 'Show supported tokens' },
       { command: 'charts', description: 'View token price charts' },
       { command: 'history', description: 'Show transaction history' },
+      { command: 'meriteligibility', description: 'Check Blockscout merit eligibility status' },
       { command: 'testindex', description: 'Test CucumberMoped Index (Hedera + Strategy)' },
       { command: 'help', description: 'Show help' }
     ]);
@@ -1315,6 +1319,51 @@ Ready to verify? 🚀`;
       this.bot.sendMessage(chatId, tokenList, { parse_mode: 'Markdown' });
     });
 
+    // Merit Eligibility command
+    this.bot.onText(/\/meriteligibility/, async (msg) => {
+      const chatId = msg.chat.id;
+      const userId = msg.from?.id;
+
+      if (!userId) {
+        this.bot.sendMessage(chatId, 'Error: User information not found.');
+        return;
+      }
+
+      try {
+        // Get user from database
+        const user = await this.db.getUser(userId);
+        if (!user) {
+          this.bot.sendMessage(chatId, 'You are not registered yet. Use /start to begin.');
+          return;
+        }
+
+        // Show loading message
+        this.bot.sendMessage(chatId, '🔍 Checking your merit eligibility...');
+
+        // Check eligibility
+        const eligibility = await this.meritEligibilityService.checkUserEligibility(userId);
+
+        // Send the comprehensive eligibility message
+        this.bot.sendMessage(chatId, eligibility.eligibilityMessage, { parse_mode: 'Markdown' });
+
+        // If user is eligible, show additional success message
+        if (eligibility.isEligible) {
+          this.bot.sendMessage(chatId, 
+            `🎉 **Congratulations!** You're eligible for the next merit drop!\n\n` +
+            `Keep trading to maintain your position in the top ${eligibility.totalEligibleTraders} traders.`,
+            { parse_mode: 'Markdown' }
+          );
+        }
+
+      } catch (error) {
+        console.error('Error checking merit eligibility:', error);
+        this.bot.sendMessage(chatId, 
+          'Error checking merit eligibility. Please try again later.\n\n' +
+          'If this persists, the merit system may be temporarily unavailable.'
+        );
+      }
+    });
+
     // Help command
     this.bot.onText(/\/help/, (msg) => {
       const chatId = msg.chat.id;
@@ -1359,6 +1408,7 @@ This bot requires proof of humanhood to prevent abuse and ensure fair access for
 /wallet - Show wallet information
 /tokens - Show supported tokens
 /history - Show transaction history
+/meriteligibility - Check Blockscout merit eligibility status
 /testindex - 🥒 CucumberMoped Index (Hedera + Strategy test)
 
 **Quick Trading Workflow:**
