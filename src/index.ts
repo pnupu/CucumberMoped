@@ -6,8 +6,9 @@ import { BlockchainService } from './services/BlockchainService';
 import { TelegramBotService } from './services/TelegramBotService';
 import { WorldIdService } from './services/WorldIdService';
 import { MiniAppServer } from './server/miniapp-server';
+import { HederaService } from './services/HederaService';
+import { StrategyService } from './services/StrategyService';
 
-import { MockHederaService } from './services/MockHederaService';
 // Load environment variables
 dotenv.config();
 
@@ -19,7 +20,8 @@ class TradingBotApp {
   private telegramBot: TelegramBotService;
   private worldIdService: WorldIdService;
   private miniAppServer: MiniAppServer;
-  private hederaService: MockHederaService;
+  private hederaService: HederaService;
+  private strategyService: StrategyService;
 
   constructor() {
     console.log('🚀 Starting Mainnet Trading Bot with Telegram Mini App...');
@@ -43,18 +45,30 @@ class TradingBotApp {
       process.env.ONEINCH_API_KEY!,
       this.walletService
     );
+
+    // Initialize Hedera service
+    this.hederaService = new HederaService();
+    this.hederaService.setOperator(
+      process.env.HEDERA_TESTNET_ACCOUNT_ID!,
+      process.env.HEDERA_TESTNET_PRIVATE_KEY!
+    );
+
+    // Initialize Strategy service
+    this.strategyService = new StrategyService();
+
     this.telegramBot = new TelegramBotService(
       process.env.TELEGRAM_BOT_TOKEN!,
       this.db,
       this.walletService,
       this.oneInchService,
       this.blockchainService,
-      this.worldIdService
+      this.worldIdService,
+      this.hederaService,
+      this.strategyService
     );
     
     // Initialize Mini App server
     this.miniAppServer = new MiniAppServer(this.db, this.worldIdService);
-    this.hederaService = new MockHederaService(true);
   }
 
   private validateEnvironment(): void {
@@ -66,7 +80,8 @@ class TradingBotApp {
       'WORLDID_APP_ID',
       'MINIAPP_URL',
       'HEDERA_TESTNET_ACCOUNT_ID',
-      'HEDERA_TESTNET_PRIVATE_KEY'
+      'HEDERA_TESTNET_PRIVATE_KEY',
+      'COINMARKETCAP_PRO_KEY'
     ];
 
     const missing = requiredVars.filter(varName => !process.env[varName]);

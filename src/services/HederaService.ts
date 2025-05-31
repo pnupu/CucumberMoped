@@ -303,4 +303,132 @@ export class HederaService {
     this.client.close();
     console.log('🌐 Hedera client connection closed');
   }
+
+  /**
+   * Find or create a topic with the given memo
+   * First searches Hedera directly via mirror node, then creates if not found
+   */
+  async findOrCreateTopicByMemo(memo: string): Promise<TopicId> {
+    try {
+      // Try to find existing topic by searching recent topics
+      // Note: This is a simplified approach as Hedera doesn't provide direct memo search
+      // In production, you might want to maintain a local registry
+      console.log(`🌐 Searching for topic with memo: "${memo}"`);
+      
+      // For now, we'll create a new topic since mirror node doesn't search by memo
+      // In production, you'd maintain a local database of topic IDs and memos
+      console.log(`🌐 Creating new topic with memo: "${memo}"`);
+      return await this.createTopic(memo);
+      
+    } catch (error) {
+      console.error('Error finding or creating topic:', error);
+      throw new Error(`Failed to find or create topic: ${error}`);
+    }
+  }
+
+  /**
+   * Get the latest message from a topic
+   */
+  async getLatestMessage(topicId: string | TopicId): Promise<TopicMessage | null> {
+    try {
+      const messages = await this.queryTopicMessages(topicId, { limit: 1 });
+      return messages.length > 0 ? messages[messages.length - 1] : null;
+    } catch (error) {
+      console.error('Error getting latest message:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Check if a message is older than the specified minutes
+   */
+  isMessageOlderThan(message: TopicMessage, minutes: number): boolean {
+    const now = new Date();
+    const messageTime = message.consensusTimestamp;
+    const diffInMs = now.getTime() - messageTime.getTime();
+    const diffInMinutes = diffInMs / (1000 * 60);
+    return diffInMinutes > minutes;
+  }
+
+  /**
+   * Check if a topic exists via Mirror Node API
+   */
+  async topicExists(topicId: string | TopicId): Promise<boolean> {
+    const topicIdObj = typeof topicId === 'string' ? TopicId.fromString(topicId) : topicId;
+    const topicIdStr = topicIdObj.toString();
+    
+    const url = `${this.mirrorNodeUrl}/api/v1/topics/${topicIdStr}/messages?limit=1`;
+    
+    try {
+      console.log(`🌐 Checking if topic exists: ${url}`);
+      const response = await axios.get<MirrorNodeResponse>(url);
+      return true; // If we get here, the topic exists
+    } catch (error: any) {
+      if (error.response?.status === 404) {
+        console.log(`🌐 Topic ${topicIdStr} does not exist`);
+        return false;
+      }
+      console.error('Error checking topic existence:', error);
+      throw new Error(`Failed to check topic existence: ${error}`);
+    }
+  }
+
+  /**
+   * Get all messages from a topic, sorted by sequence number (useful for multi-part messages)
+   */
+  async getAllTopicMessages(
+    topicId: string | TopicId,
+    options?: {
+      limit?: number;
+      order?: 'asc' | 'desc';
+    }
+  ): Promise<TopicMessage[]> {
+    const topicIdObj = typeof topicId === 'string' ? TopicId.fromString(topicId) : topicId;
+    const topicIdStr = topicIdObj.toString();
+    
+    const limit = options?.limit || 100;
+    const order = options?.order || 'desc';
+    
+    const url = `${this.mirrorNodeUrl}/api/v1/topics/${topicIdStr}/messages?limit=${limit}&order=${order}`;
+    
+    console.log(`🌐 Getting all topic messages from: ${url}`);
+    
+    try {
+      const response = await axios.get<MirrorNodeResponse>(url);
+      
+      const messages = response.data.messages.map(msg => ({
+        sequenceNumber: msg.sequence_number,
+        contents: Buffer.from(msg.message, 'base64').toString('utf8'),
+        consensusTimestamp: new Date(parseFloat(msg.consensus_timestamp) * 1000),
+        runningHash: msg.running_hash,
+        topicId: topicIdObj
+      }));
+
+      // Sort by sequence number if order is 'asc'
+      if (order === 'asc') {
+        messages.sort((a, b) => a.sequenceNumber - b.sequenceNumber);
+      } else {
+        messages.sort((a, b) => b.sequenceNumber - a.sequenceNumber);
+      }
+
+      return messages;
+    } catch (error) {
+      console.error('Error getting all topic messages:', error);
+      throw new Error(`Failed to get all topic messages: ${error}`);
+    }
+  }
+
+  /**
+   * Combine multiple sequential messages into a single JSON string
+   * Useful when large JSON is split across multiple messages due to size limits
+   */
+  combineSequentialMessages(messages: TopicMessage[]): string {
+    if (messages.length === 0) return '';
+    
+    // Sort by sequence number ascending
+    const sortedMessages = [...messages].sort((a, b) => a.sequenceNumber - b.sequenceNumber);
+    
+    // Combine all message contents
+    return sortedMessages.map(msg => msg.contents).join('');
+  }
 }

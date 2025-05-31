@@ -550,4 +550,56 @@ export class DatabaseService {
       );
     });
   }
+
+  // CucumberMoped Index specific methods
+  async findHederaTopicByMemo(memo: string): Promise<HederaTopic | null> {
+    return new Promise((resolve, reject) => {
+      this.db.get(
+        'SELECT * FROM hedera_topics WHERE memo = ? ORDER BY created_at DESC LIMIT 1',
+        [memo],
+        (err, row: any) => {
+          if (err) reject(err);
+          else if (row) {
+            resolve({
+              id: row.id,
+              topicId: row.topic_id,
+              memo: row.memo,
+              userId: row.user_id,
+              createdAt: new Date(row.created_at),
+              updatedAt: new Date(row.updated_at)
+            });
+          } else {
+            resolve(null);
+          }
+        }
+      );
+    });
+  }
+
+  async getLatestMessageFromTopic(topicId: string): Promise<HederaMessage | null> {
+    return new Promise((resolve, reject) => {
+      this.db.get(
+        'SELECT * FROM hedera_messages WHERE topic_id = ? ORDER BY sequence_number DESC LIMIT 1',
+        [topicId],
+        (err, row: any) => {
+          if (err) reject(err);
+          else if (row) {
+            resolve({
+              id: row.id,
+              topicId: row.topic_id,
+              sequenceNumber: row.sequence_number,
+              message: row.message,
+              userId: row.user_id,
+              consensusTimestamp: row.consensus_timestamp ? new Date(row.consensus_timestamp) : undefined,
+              runningHash: row.running_hash,
+              createdAt: new Date(row.created_at),
+              updatedAt: new Date(row.updated_at)
+            });
+          } else {
+            resolve(null);
+          }
+        }
+      );
+    });
+  }
 } 

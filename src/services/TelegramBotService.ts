@@ -3,7 +3,9 @@ import { DatabaseService } from './DatabaseService';
 import { WalletService } from './WalletService';
 import { BlockchainService } from './BlockchainService';
 import { WorldIdService } from './WorldIdService';
-import { IOneInchService, OneInchQuoteParams } from '../types';
+import { HederaService } from './HederaService';
+import { StrategyService } from './StrategyService';
+import { IOneInchService, OneInchQuoteParams, HederaTopic, HederaMessage } from '../types';
 
 import { getTokenBySymbol, getTokensByChain, CHAIN_NAMES, SUPPORTED_TOKENS } from '../config/tokens';
 import { ethers } from 'ethers';
@@ -15,6 +17,8 @@ export class TelegramBotService {
   private oneInchService: IOneInchService;
   private blockchainService?: BlockchainService;
   private worldIdService?: WorldIdService;
+  private hederaService?: HederaService;
+  private strategyService?: StrategyService;
   private quoteStorage: Map<string, OneInchQuoteParams> = new Map();
 
   constructor(
@@ -23,7 +27,9 @@ export class TelegramBotService {
     walletService: WalletService,
     oneInchService: IOneInchService,
     blockchainService?: BlockchainService,
-    worldIdService?: WorldIdService
+    worldIdService?: WorldIdService,
+    hederaService?: HederaService,
+    strategyService?: StrategyService
   ) {
     this.bot = new TelegramBot(token, { polling: true });
     this.db = db;
@@ -31,6 +37,8 @@ export class TelegramBotService {
     this.oneInchService = oneInchService;
     this.blockchainService = blockchainService;
     this.worldIdService = worldIdService;
+    this.hederaService = hederaService;
+    this.strategyService = strategyService;
 
     this.setupCommands();
     this.setupCallbackHandlers();
@@ -65,6 +73,7 @@ export class TelegramBotService {
       { command: 'status', description: 'Check specific order status' },
       { command: 'tokens', description: 'Show supported tokens' },
       { command: 'history', description: 'Show transaction history' },
+      { command: 'testindex', description: 'Test CucumberMoped Index (Hedera + Strategy)' },
       { command: 'help', description: 'Show help' }
     ]);
   }
@@ -741,6 +750,7 @@ This bot requires proof of humanhood to prevent abuse and ensure fair access for
 /wallet - Show wallet information
 /tokens - Show supported tokens
 /history - Show transaction history
+/testindex - 🥒 CucumberMoped Index (Hedera + Strategy test)
 
 **Quick Trading Workflow:**
 1️⃣ \`/quote 10 USDC DEGEN\` - Get live price quote
@@ -772,6 +782,293 @@ This bot requires proof of humanhood to prevent abuse and ensure fair access for
       `;
       
       this.bot.sendMessage(chatId, helpText, { parse_mode: 'Markdown' });
+    });
+
+    // TestIndex command - CucumberMoped Index management with Hedera + Strategy
+    this.bot.onText(/\/testindex/, async (msg) => {
+      const chatId = msg.chat.id;
+      const userId = msg.from?.id;
+
+      if (!userId) return;
+
+      try {
+        // Check if services are available
+        if (!this.hederaService || !this.strategyService) {
+          this.bot.sendMessage(chatId, 
+            '❌ Hedera or Strategy service not available.\n\n' +
+            'Please check that the bot is configured with both services.'
+          );
+          return;
+        }
+
+        const user = await this.db.getUser(userId);
+        if (!user) {
+          this.bot.sendMessage(chatId, 'You are not registered yet. Use /start to begin.');
+          return;
+        }
+
+        const TESTNET_TOPIC_ID = '0.0.6089779';
+        
+        this.bot.sendMessage(chatId, '🥒 CucumberMoped Index Test Starting...\n\n🔍 Checking Hedera testnet topic...');
+
+        // Log hashscan URL for debugging
+        const hashscanUrl = `https://hashscan.io/testnet/topic/${TESTNET_TOPIC_ID}`;
+        console.log(`🔗 HashScan URL for debugging: ${hashscanUrl}`);
+        this.bot.sendMessage(chatId, `🔗 HashScan: ${hashscanUrl}`);
+
+        let needsNewCalculation = false;
+        let portfolio: any = null;
+
+        // Step 1: Check if the specific testnet topic exists
+        this.bot.sendMessage(chatId, `🔍 Checking if topic ${TESTNET_TOPIC_ID} exists on Hedera...`);
+        
+        try {
+          const topicExists = await this.hederaService.topicExists(TESTNET_TOPIC_ID);
+          
+          if (!topicExists) {
+            this.bot.sendMessage(chatId, 
+              `❌ Topic ${TESTNET_TOPIC_ID} not found on Hedera testnet.\n\n` +
+              `This topic may not exist yet or may be on a different network.`
+            );
+            return;
+          }
+
+          this.bot.sendMessage(chatId, `✅ Topic ${TESTNET_TOPIC_ID} found on Hedera testnet`);
+
+        } catch (error) {
+          console.error('Error checking topic existence:', error);
+          this.bot.sendMessage(chatId, 
+            `❌ Error checking topic existence: ${error instanceof Error ? error.message : 'Unknown error'}`
+          );
+          return;
+        }
+
+        // Step 2: Fetch the latest messages from the topic
+        this.bot.sendMessage(chatId, '📥 Fetching latest messages from topic...');
+        
+        try {
+          // Get the most recent messages (might be split across multiple messages)
+          const recentMessages = await this.hederaService.getAllTopicMessages(TESTNET_TOPIC_ID, {
+            limit: 10,  // Get last 10 messages to handle potential multi-part JSON
+            order: 'desc'
+          });
+
+          if (recentMessages.length === 0) {
+            this.bot.sendMessage(chatId, 
+              `📭 No messages found in topic ${TESTNET_TOPIC_ID}.\n\n` +
+              `The topic exists but has no messages yet.`
+            );
+            needsNewCalculation = true;
+          } else {
+            this.bot.sendMessage(chatId, 
+              `📊 Found ${recentMessages.length} recent messages in topic.\n` +
+              `Latest message age: ${((new Date().getTime() - recentMessages[0].consensusTimestamp.getTime()) / 60000).toFixed(1)} minutes`
+            );
+
+            // Step 3: Check age of the latest message
+            const latestMessage = recentMessages[0];
+            const messageAge = new Date().getTime() - latestMessage.consensusTimestamp.getTime();
+            const ageInMinutes = messageAge / (1000 * 60);
+
+            console.log(`🕒 Latest message age: ${ageInMinutes.toFixed(1)} minutes`);
+
+            if (ageInMinutes > 10) {
+              this.bot.sendMessage(chatId, 
+                `⏰ Latest message is ${ageInMinutes.toFixed(1)} minutes old (>10 minutes).\n` +
+                `Calculating new Black-Litterman allocations...`
+              );
+              needsNewCalculation = true;
+            } else {
+              this.bot.sendMessage(chatId, 
+                `✅ Recent message found (${ageInMinutes.toFixed(1)} minutes old).\n` +
+                `Parsing portfolio data...`
+              );
+
+              // Step 4: Parse the latest message(s) - handle multi-part JSON
+              try {
+                // Try to parse the latest message as JSON first
+                let combinedJsonString = latestMessage.contents;
+                
+                try {
+                  JSON.parse(combinedJsonString);
+                  // If parsing succeeds, we have a complete JSON
+                } catch (parseError) {
+                  // If parsing fails, try to combine with subsequent messages
+                  this.bot.sendMessage(chatId, '🔗 Message appears to be multi-part, combining...');
+                  
+                  // Find consecutive messages that might form a complete JSON
+                  const consecutiveMessages: typeof recentMessages = [latestMessage];
+                  
+                  // Look for previous messages that might be part of the same JSON
+                  // (assuming they are posted close in time)
+                  const timeThreshold = 60000; // 1 minute
+                  for (let i = 1; i < recentMessages.length; i++) {
+                    const timeDiff = latestMessage.consensusTimestamp.getTime() - recentMessages[i].consensusTimestamp.getTime();
+                    if (timeDiff <= timeThreshold) {
+                      consecutiveMessages.push(recentMessages[i]);
+                    } else {
+                      break;
+                    }
+                  }
+
+                  // Sort by sequence number and combine
+                  consecutiveMessages.sort((a, b) => a.sequenceNumber - b.sequenceNumber);
+                  combinedJsonString = this.hederaService.combineSequentialMessages(consecutiveMessages);
+                  
+                  this.bot.sendMessage(chatId, 
+                    `🔗 Combined ${consecutiveMessages.length} messages into ${combinedJsonString.length} characters`
+                  );
+                }
+
+                // Parse the combined JSON
+                const messageData = JSON.parse(combinedJsonString);
+                
+                if (messageData.type === 'portfolio_allocation' && messageData.allocations) {
+                  portfolio = {
+                    allocations: messageData.allocations || [],
+                    totalMarketCap: messageData.total_market_cap || messageData.totalMarketCap || 0,
+                    timestamp: messageData.timestamp || new Date().toISOString()
+                  };
+                  
+                  this.bot.sendMessage(chatId, 
+                    `✅ Successfully parsed portfolio data:\n` +
+                    `• ${portfolio.allocations.length} allocations\n` +
+                    `• Total market cap: $${(portfolio.totalMarketCap / 1e9).toFixed(2)}B\n` +
+                    `• Data timestamp: ${new Date(portfolio.timestamp).toLocaleString()}`
+                  );
+                } else {
+                  this.bot.sendMessage(chatId, 
+                    `⚠️ Message found but doesn't contain valid portfolio allocation data.\n` +
+                    `Message type: ${messageData.type || 'unknown'}`
+                  );
+                  needsNewCalculation = true;
+                }
+
+              } catch (parseError) {
+                console.error('Error parsing message data:', parseError);
+                this.bot.sendMessage(chatId, 
+                  `⚠️ Error parsing message data: ${parseError instanceof Error ? parseError.message : 'Unknown error'}\n` +
+                  `Calculating fresh allocations...`
+                );
+                needsNewCalculation = true;
+              }
+            }
+          }
+
+        } catch (error) {
+          console.error('Error fetching messages from topic:', error);
+          this.bot.sendMessage(chatId, 
+            `❌ Error fetching messages: ${error instanceof Error ? error.message : 'Unknown error'}\n` +
+            `Will calculate new allocations...`
+          );
+          needsNewCalculation = true;
+        }
+
+        // Step 5: Calculate new allocations if needed
+        if (needsNewCalculation) {
+          this.bot.sendMessage(chatId, '🧮 Calculating new Black-Litterman allocations...');
+          
+          try {
+            const { portfolio: newPortfolio, hederaMessage } = await this.strategyService.getPortfolioAllocation();
+            portfolio = newPortfolio;
+
+            // Submit to the testnet topic
+            this.bot.sendMessage(chatId, `📝 Posting new allocations to topic ${TESTNET_TOPIC_ID}...`);
+            
+            // Note: This might require splitting the message if it's too large
+            const maxMessageSize = 1024; // Hedera message size limit
+            
+            if (hederaMessage.length > maxMessageSize) {
+              this.bot.sendMessage(chatId, 
+                `📏 Message is ${hederaMessage.length} chars, splitting into multiple parts...`
+              );
+              
+              // Split message into chunks
+              const chunks: string[] = [];
+              for (let i = 0; i < hederaMessage.length; i += maxMessageSize) {
+                chunks.push(hederaMessage.slice(i, i + maxMessageSize));
+              }
+
+              // Submit each chunk
+              for (let i = 0; i < chunks.length; i++) {
+                const chunk = chunks[i];
+                const sequenceNumber = await this.hederaService.submitMessage(TESTNET_TOPIC_ID, chunk);
+                console.log(`📤 Submitted chunk ${i + 1}/${chunks.length} with sequence: ${sequenceNumber}`);
+                
+                // Wait a bit between messages
+                await new Promise(resolve => setTimeout(resolve, 1000));
+              }
+
+              this.bot.sendMessage(chatId, 
+                `✅ Split message into ${chunks.length} parts and submitted to Hedera`
+              );
+            } else {
+              const sequenceNumber = await this.hederaService.submitMessage(TESTNET_TOPIC_ID, hederaMessage);
+              this.bot.sendMessage(chatId, 
+                `✅ New allocations posted (sequence: ${sequenceNumber})`
+              );
+            }
+
+          } catch (error) {
+            console.error('Error calculating or posting allocations:', error);
+            this.bot.sendMessage(chatId, 
+              `❌ Error calculating allocations: ${error instanceof Error ? error.message : 'Unknown error'}`
+            );
+            return;
+          }
+        }
+
+        // Step 6: Generate and send comprehensive overview
+        if (portfolio && portfolio.allocations && portfolio.allocations.length > 0) {
+          try {
+            // Create overview
+            const overview = this.strategyService.createIndexOverview(portfolio, needsNewCalculation);
+            
+            // Create allocation chart
+            const chart = this.strategyService.generateAllocationChart(portfolio);
+            
+            // Send overview
+            this.bot.sendMessage(chatId, overview, { parse_mode: 'Markdown' });
+            
+            // Send chart in monospace for better formatting
+            this.bot.sendMessage(chatId, `\`\`\`\n${chart}\n\`\`\``, { parse_mode: 'Markdown' });
+            
+            // Summary stats
+            const summary = this.strategyService.getPortfolioSummary(portfolio);
+            this.bot.sendMessage(chatId, summary);
+
+            // Final status with debugging info
+            this.bot.sendMessage(chatId, 
+              `🎉 CucumberMoped Index Test Complete!\n\n` +
+              `📊 Topic ID: \`${TESTNET_TOPIC_ID}\`\n` +
+              `🔗 HashScan: ${hashscanUrl}\n` +
+              `💰 Total Market Cap: $${(portfolio.totalMarketCap / 1e9).toFixed(2)}B\n` +
+              `🎯 Active Allocations: ${portfolio.allocations.length}\n` +
+              `⏰ Data Age: ${needsNewCalculation ? 'Just calculated' : 'Recent (under 10 min)'}\n` +
+              `🔄 Next Update: ${needsNewCalculation ? 'Available now' : 'In 10+ minutes'}\n\n` +
+              `Use /testindex again to refresh the index!`,
+              { parse_mode: 'Markdown' }
+            );
+
+          } catch (error) {
+            console.error('Error generating overview:', error);
+            this.bot.sendMessage(chatId, 
+              `❌ Error generating overview: ${error instanceof Error ? error.message : 'Unknown error'}`
+            );
+          }
+        } else {
+          this.bot.sendMessage(chatId, 
+            '❌ No portfolio data available. Please try again.\n\n' +
+            `Debug info: Topic ${TESTNET_TOPIC_ID} exists but contains no valid portfolio data.`
+          );
+        }
+
+      } catch (error) {
+        console.error('Error in testIndex command:', error);
+        this.bot.sendMessage(chatId, 
+          `❌ Error running index test: ${error instanceof Error ? error.message : 'Unknown error'}`
+        );
+      }
     });
 
     // Orders command - check active orders
