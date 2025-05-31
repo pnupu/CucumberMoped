@@ -142,6 +142,7 @@ export interface IWorldIdService {
   generateVerificationQRCodeBase64(userId: number, action?: string): Promise<string>;
   generateVerificationQRCodeSVG(userId: number, action?: string): Promise<string>;
   generateVerificationQRCodeBuffer(userId: number, action?: string): Promise<Buffer>;
+}
 // Hedera-specific types for database storage
 export interface HederaTopic {
   id: string;
