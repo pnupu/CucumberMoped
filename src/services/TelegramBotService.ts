@@ -72,6 +72,7 @@ export class TelegramBotService {
       { command: 'orders', description: 'Check active/recent orders' },
       { command: 'status', description: 'Check specific order status' },
       { command: 'tokens', description: 'Show supported tokens' },
+      { command: 'charts', description: 'View token price charts' },
       { command: 'history', description: 'Show transaction history' },
       { command: 'testindex', description: 'Test CucumberMoped Index (Hedera + Strategy)' },
       { command: 'help', description: 'Show help' }
@@ -219,6 +220,60 @@ Ready to verify? 🚀`;
       } catch (error) {
         console.error('Error in /verify command:', error);
         this.bot.sendMessage(chatId, 'Error setting up World ID verification. Please try again.');
+      }
+    });
+
+    // /charts command for viewing token price charts
+    this.bot.onText(/\/charts(.*)/, async (msg, match) => {
+      const chatId = msg.chat.id;
+      const userId = msg.from?.id;
+      const tokenSymbol = match?.[1]?.trim().toUpperCase() || '';
+
+      if (!userId) {
+        this.bot.sendMessage(chatId, 'Error: Could not identify user.');
+        return;
+      }
+
+      try {
+        // Build the charts mini app URL
+        const baseUrl = process.env.MINIAPP_URL || 'http://localhost:3001';
+        const chartsUrl = tokenSymbol ? 
+          `${baseUrl}/charts/${tokenSymbol.toLowerCase()}` : 
+          `${baseUrl}/charts`;
+
+        const chartKeyboard = {
+          inline_keyboard: [
+            [
+              { text: '📊 Open Charts', web_app: { url: chartsUrl } }
+            ]
+          ]
+        };
+
+        let message = '📊 **Token Price Charts**\n\n';
+        
+        if (tokenSymbol) {
+          message += `Opening chart for **${tokenSymbol}**\n\n`;
+        } else {
+          message += 'View real-time price charts for all supported tokens:\n\n';
+          message += '• **Search & Filter** - Find tokens by symbol or chain\n';
+          message += '• **Multiple Chains** - Ethereum, Base, Arbitrum, Polygon\n';
+          message += '• **Live Data** - Real-time charts from GeckoTerminal\n\n';
+          message += '**Popular tokens:**\n';
+          message += '🔷 ETH, WBTC, AAVE, PEPE, LINK\n';
+          message += '🔵 VIRTUAL, DEGEN, BRETT, AERO\n';
+          message += '🔴 PENDLE, GMX, ZRO\n\n';
+        }
+        
+        message += 'Click the button below to open the charts! 👇';
+
+        await this.bot.sendMessage(chatId, message, {
+          reply_markup: chartKeyboard,
+          parse_mode: 'Markdown'
+        });
+        
+      } catch (error) {
+        console.error('Error in /charts command:', error);
+        this.bot.sendMessage(chatId, 'Error opening charts. Please try again.');
       }
     });
 

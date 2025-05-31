@@ -1,6 +1,8 @@
 /**
  * Mini App Server
- * Serves the Telegram Mini App and handles World ID verification API
+ * Serves both Telegram Mini Apps:
+ * - Main Mini App for World ID verification
+ * - Charts Mini App for displaying token price charts
  */
 
 import express, { Request, Response } from 'express';
@@ -31,7 +33,6 @@ export class MiniAppServer {
     }));
     
     this.app.use(express.json());
-    this.app.use(express.static(path.join(__dirname, '../../miniapp/dist')));
   }
 
   private setupRoutes(): void {
@@ -108,7 +109,25 @@ export class MiniAppServer {
       }
     });
 
-    // Serve the Mini App
+    // IMPORTANT: Static files MUST come before catch-all routes
+    // Static files for charts miniapp (serve assets like JS/CSS files)
+    this.app.use('/charts', express.static(path.join(__dirname, '../../charts-miniapp/dist')));
+    
+    // Static files for main miniapp  
+    this.app.use(express.static(path.join(__dirname, '../../miniapp/dist')));
+
+    // Handle charts SPA routes (only for HTML requests that don't match static files)
+    this.app.get('/charts*', (req: Request, res: Response): void => {
+      // Only serve HTML for routes that don't look like static assets
+      if (!req.path.includes('.') || req.path.endsWith('.html')) {
+        res.sendFile(path.join(__dirname, '../../charts-miniapp/dist/index.html'));
+      } else {
+        // Let it fall through to 404 for missing assets
+        res.status(404).send('Asset not found');
+      }
+    });
+
+    // Serve the main Mini App for all other routes
     this.app.get('*', (req: Request, res: Response): void => {
       res.sendFile(path.join(__dirname, '../../miniapp/dist/index.html'));
     });
@@ -117,7 +136,8 @@ export class MiniAppServer {
   public start(port: number = 3001): void {
     this.app.listen(port, () => {
       console.log(`🚀 Mini App server running on port ${port}`);
-      console.log(`📱 Mini App URL: http://localhost:${port}`);
+      console.log(`📱 Main Mini App URL: http://localhost:${port}`);
+      console.log(`📊 Charts Mini App URL: http://localhost:${port}/charts`);
     });
   }
 } 
