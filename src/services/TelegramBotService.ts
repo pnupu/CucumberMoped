@@ -13,6 +13,7 @@ export class TelegramBotService {
   private walletService: WalletService;
   private oneInchService: IOneInchService;
   private blockchainService?: BlockchainService;
+  private quoteStorage: Map<string, OneInchQuoteParams> = new Map();
 
   constructor(
     token: string,
@@ -31,6 +32,22 @@ export class TelegramBotService {
     this.setupCallbackHandlers();
   }
 
+  private generateQuoteId(): string {
+    return Math.random().toString(36).substring(2, 15);
+  }
+
+  private storeQuote(quoteParams: OneInchQuoteParams): string {
+    const quoteId = this.generateQuoteId();
+    this.quoteStorage.set(quoteId, quoteParams);
+    
+    // Clean up old quotes after 10 minutes
+    setTimeout(() => {
+      this.quoteStorage.delete(quoteId);
+    }, 10 * 60 * 1000);
+    
+    return quoteId;
+  }
+
   private setupCommands(): void {
     this.bot.setMyCommands([
       { command: 'start', description: 'Start using the bot' },
@@ -38,7 +55,9 @@ export class TelegramBotService {
       { command: 'balance', description: 'Show token balances' },
       { command: 'buy', description: 'Buy tokens (e.g. /buy 100 USDC ETH)' },
       { command: 'sell', description: 'Sell tokens (e.g. /sell 0.1 ETH USDC)' },
-      { command: 'quote', description: 'Get price quote (e.g. /quote 100 USDC ETH)' },
+      { command: 'quote', description: 'Get price quote with instant buy option' },
+      { command: 'orders', description: 'Check active/recent orders' },
+      { command: 'status', description: 'Check specific order status' },
       { command: 'tokens', description: 'Show supported tokens' },
       { command: 'history', description: 'Show transaction history' },
       { command: 'help', description: 'Show help' }
@@ -366,13 +385,99 @@ export class TelegramBotService {
         }
 
         const [amount, fromSymbol, toSymbol] = parts;
-        const fromToken = getTokenBySymbol(fromSymbol.toUpperCase(), 1);
-        const toToken = getTokenBySymbol(toSymbol.toUpperCase(), 1);
+        // Default to Base network (8453) first
+        let fromToken = getTokenBySymbol(fromSymbol.toUpperCase(), 8453);
+        let toToken = getTokenBySymbol(toSymbol.toUpperCase(), 8453);
 
+        // If not found on Base, try to find the best cross-chain combination
         if (!fromToken || !toToken) {
-          this.bot.sendMessage(chatId, 'Unknown token. Use /tokens to see supported tokens.');
+          // Check if tokens exist on other chains for cross-chain options
+          const allFromTokens = SUPPORTED_TOKENS.filter(token => 
+            token.symbol.toLowerCase() === fromSymbol.toLowerCase()
+          );
+          const allToTokens = SUPPORTED_TOKENS.filter(token => 
+            token.symbol.toLowerCase() === toSymbol.toLowerCase()
+          );
+
+          if (allFromTokens.length === 0) {
+            this.bot.sendMessage(chatId, 
+              `❌ Token "${fromSymbol.toUpperCase()}" not found on any supported network.\n\n` +
+              `Use /tokens to see all supported tokens.`
+            );
+            return;
+          }
+
+          if (allToTokens.length === 0) {
+            this.bot.sendMessage(chatId, 
+              `❌ Token "${toSymbol.toUpperCase()}" not found on any supported network.\n\n` +
+              `Use /tokens to see all supported tokens.`
+            );
+            return;
+          }
+
+          // Find the best cross-chain combination
+          // Priority: Base USDC as source, then other combinations
+          let bestFromToken = allFromTokens.find(t => t.symbol === 'USDC' && t.chainId === 8453) || allFromTokens[0];
+          let bestToToken = allToTokens.find(t => t.chainId !== bestFromToken.chainId) || allToTokens[0];
+
+          // If still same chain, try different combinations
+          if (bestFromToken.chainId === bestToToken.chainId) {
+            for (const fromTok of allFromTokens) {
+              for (const toTok of allToTokens) {
+                if (fromTok.chainId !== toTok.chainId) {
+                  bestFromToken = fromTok;
+                  bestToToken = toTok;
+                  break;
+                }
+              }
+              if (bestFromToken.chainId !== bestToToken.chainId) break;
+            }
+          }
+
+          // If still same chain, show suggestions
+          if (bestFromToken.chainId === bestToToken.chainId) {
+            this.bot.sendMessage(chatId, 
+              `🔍 Only same-chain combinations available:\n\n` +
+              `**Available locations:**\n` +
+              `${fromSymbol.toUpperCase()}: ${allFromTokens.map(t => CHAIN_NAMES[t.chainId]).join(', ')}\n` +
+              `${toSymbol.toUpperCase()}: ${allToTokens.map(t => CHAIN_NAMES[t.chainId]).join(', ')}\n\n` +
+              `⚠️ Our bot only supports cross-chain swaps via 1inch Fusion+.\n` +
+              `For same-chain swaps, use DEX aggregators directly.\n\n` +
+              `**Base tokens:** USDC, cbBTC, VIRTUAL, DEGEN, BRETT`
+            );
+            return;
+          }
+
+          // Use the best cross-chain combination
+          fromToken = bestFromToken;
+          toToken = bestToToken;
+
+          this.bot.sendMessage(chatId, 
+            `🔄 Using cross-chain combination:\n` +
+            `${fromToken.symbol} (${CHAIN_NAMES[fromToken.chainId]}) → ${toToken.symbol} (${CHAIN_NAMES[toToken.chainId]})\n\n` +
+            `Getting quote...`
+          );
+        }
+
+        // Check if this is a same-chain swap (after finding tokens)
+        /* Removing same-chain restriction - now supporting both same-chain and cross-chain
+        if (fromToken.chainId === toToken.chainId) {
+          this.bot.sendMessage(chatId,
+            `📊 Same-Chain Quote Request:\n\n` +
+            `${amount} ${fromSymbol.toUpperCase()} → ${toSymbol.toUpperCase()}\n` +
+            `Network: ${CHAIN_NAMES[fromToken.chainId]}\n\n` +
+            `⚠️ **Note**: Our bot currently uses 1inch Fusion+ which is designed for cross-chain swaps.\n\n` +
+            `**For same-chain swaps on ${CHAIN_NAMES[fromToken.chainId]}:**\n` +
+            `• Use DEX aggregators like 1inch.io directly\n` +
+            `• Try Uniswap, Aerodrome, or other DEXs\n` +
+            `• Consider bridging to another chain for cross-chain swaps\n\n` +
+            `**Cross-chain alternatives:**\n` +
+            `• Bridge tokens to different chains\n` +
+            `• Use /tokens to see supported chains`
+          );
           return;
         }
+        */
 
         const quoteParams: OneInchQuoteParams = {
           srcChainId: fromToken.chainId,
@@ -386,17 +491,52 @@ export class TelegramBotService {
         const quote = await this.oneInchService.getQuote(quoteParams);
         const outputAmount = ethers.formatUnits(quote.toAmount, toToken.decimals);
 
+        // Display quote for both same-chain and cross-chain swaps
+        const swapType = fromToken.chainId === toToken.chainId ? 'Same-Chain' : 'Cross-Chain';
+        const networkInfo = fromToken.chainId === toToken.chainId 
+          ? `Network: ${CHAIN_NAMES[fromToken.chainId]}`
+          : `From: ${CHAIN_NAMES[fromToken.chainId]} → To: ${CHAIN_NAMES[toToken.chainId]}`;
+
+        // Store quote data and get short ID for callback
+        const quoteId = this.storeQuote(quoteParams);
+
+        // Create inline keyboard for immediate trading
+        const keyboard = {
+          inline_keyboard: [
+            [
+              { text: '🚀 Buy Now', callback_data: `quote_${quoteId}` },
+              { text: '❌ Cancel', callback_data: 'cancel' }
+            ]
+          ]
+        };
+
+        // Add a note about the execution method for same-chain swaps
+        let executionNote = '';
+        if (fromToken.chainId === toToken.chainId) {
+          executionNote = '\n💡 Using Fusion mode (or regular API fallback for fee-on-transfer tokens)';
+        }
+
         this.bot.sendMessage(chatId,
-          `📊 Price Quote:\n\n` +
+          `📊 ${swapType} Quote:\n\n` +
           `${amount} ${fromSymbol.toUpperCase()} → ~${outputAmount} ${toSymbol.toUpperCase()}\n` +
+          `${networkInfo}\n` +
           `Price Impact: ~${quote.priceImpact}%\n` +
-          `Estimated Gas: ${quote.estimatedGas}\n\n` +
-          `Use /buy to start a trade.`
+          `Estimated Gas: ${quote.estimatedGas}${executionNote}\n\n` +
+          `Click "Buy Now" to execute this trade immediately!`,
+          { reply_markup: keyboard }
         );
 
       } catch (error) {
         console.error('Error in quote command:', error);
-        this.bot.sendMessage(chatId, 'Error getting price quote.');
+        if (error instanceof Error && error.message.includes('srcChain and dstChain should be different')) {
+          this.bot.sendMessage(chatId, 
+            `❌ Same-chain swaps not supported.\n\n` +
+            `Our bot uses 1inch Fusion+ for cross-chain swaps only.\n` +
+            `For same-chain swaps, use DEX aggregators directly.`
+          );
+        } else {
+          this.bot.sendMessage(chatId, 'Error getting price quote.');
+        }
       }
     });
 
@@ -436,23 +576,146 @@ export class TelegramBotService {
 /balance - Show token balances
 /buy [token] [amount] - Buy tokens with USDC
 /sell [amount] [token] [to_token] - Sell tokens
-/quote [amount] [token1] [token2] - Get price quote
+/quote [amount] [token1] [token2] - Get price quote with instant buy option
+/orders - Check active/recent orders
+/status [order_id] - Check specific order status
 /tokens - Show supported tokens
 /history - Show transaction history
 
-**Examples:**
-\`/buy ETH 100\` - Buy ETH with 100 USDC (Base)
-\`/buy 100 USDC ETH\` - Buy ETH with 100 USDC
-\`/sell 0.1 ETH USDC\` - Sell 0.1 ETH for USDC
-\`/quote 50 USDC PEPE\` - Get price for 50 USDC → PEPE
+**Quick Trading Workflow:**
+1️⃣ \`/quote 0.1 USDC DEGEN\` - Get live price quote
+2️⃣ Click "🚀 Buy Now" button - Execute trade instantly
+3️⃣ \`/orders\` - Check if your trade executed
+4️⃣ \`/balance\` - See updated balances
 
-**Notes:**
+**Order Tracking:**
+\`/orders\` - See all your recent orders
+\`/status 0x1234...\` - Check specific order by ID
+💡 Orders may take time to execute on-chain
+
+**Examples:**
+\`/quote 10 USDC DEGEN\` - Quote + instant buy option (Base)
+\`/quote 50 USDC PEPE\` - Quote + instant buy (cross-chain)
+\`/buy ETH 100\` - Traditional buy command
+\`/sell 0.1 ETH USDC\` - Sell ETH for USDC
+
+**Features:**
+💱 Same-chain swaps via Fusion mode
+🌉 Cross-chain swaps via 1inch Fusion+
+🚀 One-click trading from quote responses
+📊 Real-time order status tracking
 💰 USDC on Base is the primary trading token
 ⚡ Base network offers lower fees
-🔗 All trades go through 1inch Fusion+
       `;
       
       this.bot.sendMessage(chatId, helpText, { parse_mode: 'Markdown' });
+    });
+
+    // Orders command - check active orders
+    this.bot.onText(/\/orders/, async (msg) => {
+      const chatId = msg.chat.id;
+      const userId = msg.from?.id;
+
+      if (!userId) return;
+
+      try {
+        const user = await this.db.getUser(userId);
+        if (!user) {
+          this.bot.sendMessage(chatId, 'You are not registered yet. Use /start to begin.');
+          return;
+        }
+
+        this.bot.sendMessage(chatId, '🔍 Checking your active orders...');
+
+        // Get active orders from 1inch
+        const activeOrders = await this.oneInchService.getActiveOrders(user.walletAddress);
+        
+        // Get recent transactions from database
+        const recentTransactions = await this.db.getTransactionHistory(userId, 10);
+
+        let orderText = '📋 Your Orders:\n\n';
+
+        if (activeOrders.length > 0) {
+          orderText += '**Active Orders:**\n';
+          for (const order of activeOrders.slice(0, 5)) {
+            orderText += `• ID: ${order.orderHash || order.id || 'Unknown'}\n`;
+            orderText += `  Status: ${order.status || 'pending'}\n`;
+            orderText += `  Created: ${order.createDateTime || 'Unknown'}\n\n`;
+          }
+        }
+
+        if (recentTransactions.length > 0) {
+          orderText += '**Recent Transactions:**\n';
+          for (const tx of recentTransactions.slice(0, 5)) {
+            const date = new Date(tx.createdAt).toLocaleDateString();
+            orderText += `• ${tx.type.toUpperCase()}: ${tx.id.substring(0, 10)}...\n`;
+            orderText += `  Status: ${tx.status}\n`;
+            orderText += `  Date: ${date}\n\n`;
+          }
+        }
+
+        if (activeOrders.length === 0 && recentTransactions.length === 0) {
+          orderText += 'No orders found.\n\nTry making a trade with /quote command!';
+        }
+
+        this.bot.sendMessage(chatId, orderText, { parse_mode: 'Markdown' });
+
+      } catch (error) {
+        console.error('Error checking orders:', error);
+        this.bot.sendMessage(chatId, 'Error checking orders. Please try again.');
+      }
+    });
+
+    // Status command - check specific order
+    this.bot.onText(/\/status (.+)/, async (msg, match) => {
+      const chatId = msg.chat.id;
+      const userId = msg.from?.id;
+      const orderId = match?.[1];
+
+      if (!userId || !orderId) return;
+
+      try {
+        const user = await this.db.getUser(userId);
+        if (!user) {
+          this.bot.sendMessage(chatId, 'You are not registered yet. Use /start to begin.');
+          return;
+        }
+
+        this.bot.sendMessage(chatId, `🔍 Checking order status: ${orderId.substring(0, 10)}...`);
+
+        // Check order status via 1inch API
+        const status = await this.oneInchService.getOrderStatus(orderId);
+        
+        // Also check database
+        const dbTransaction = await this.db.getTransactionById(orderId);
+
+        let statusText = `📊 Order Status: ${orderId.substring(0, 20)}...\n\n`;
+        
+        if (status && status !== 'unknown') {
+          statusText += `**1inch Status:** ${status}\n`;
+        }
+        
+        if (dbTransaction) {
+          statusText += `**Database Status:** ${dbTransaction.status}\n`;
+          statusText += `**Type:** ${dbTransaction.type}\n`;
+          statusText += `**Chain:** ${CHAIN_NAMES[dbTransaction.chainId] || dbTransaction.chainId}\n`;
+          statusText += `**Created:** ${new Date(dbTransaction.createdAt).toLocaleString()}\n`;
+          if (dbTransaction.txHash) {
+            statusText += `**Tx Hash:** ${dbTransaction.txHash.substring(0, 20)}...\n`;
+          }
+        }
+
+        if (!status || status === 'unknown' && !dbTransaction) {
+          statusText += 'Order not found in 1inch or database.\n\n';
+          statusText += '💡 This might be a simulated order from fallback API.';
+        }
+
+        this.bot.sendMessage(chatId, statusText, { parse_mode: 'Markdown' });
+
+      } catch (error) {
+        console.error('Error checking order status:', error);
+        this.bot.sendMessage(chatId, `Error checking order status: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
     });
 
     // Handle callback queries (button presses)
@@ -518,6 +781,111 @@ export class TelegramBotService {
         } catch (error) {
           console.error('Error confirming buy:', error);
           this.bot.answerCallbackQuery(query.id, { text: 'Error submitting order!' });
+        }
+      }
+
+      if (data.startsWith('quote_')) {
+        try {
+          const quoteId = data.replace('quote_', '');
+          const quoteParams = this.quoteStorage.get(quoteId);
+          
+          if (!quoteParams) {
+            this.bot.answerCallbackQuery(query.id, { text: 'Quote expired! Get a new quote.' });
+            this.bot.editMessageText(
+              `❌ Quote Expired\n\n` +
+              `This quote has expired. Please use /quote to get a fresh quote.`,
+              {
+                chat_id: chatId,
+                message_id: query.message?.message_id
+              }
+            );
+            return;
+          }
+
+          const user = await this.db.getUser(userId);
+          if (!user) {
+            this.bot.answerCallbackQuery(query.id, { text: 'User not found!' });
+            return;
+          }
+
+          // Acknowledge the callback immediately
+          this.bot.answerCallbackQuery(query.id, { text: 'Executing trade...' });
+
+          // Update message to show processing
+          this.bot.editMessageText(
+            `⏳ Executing trade...\n\n` +
+            `Please wait while we process your transaction.`,
+            {
+              chat_id: chatId,
+              message_id: query.message?.message_id
+            }
+          );
+
+          // Execute the trade
+          const orderResult = await this.oneInchService.placeOrder(
+            quoteParams,
+            user.encryptedPrivateKey
+          );
+
+          // Save transaction to database
+          const transaction = {
+            id: orderResult.orderId,
+            userId: userId,
+            type: 'swap' as const,
+            fromToken: quoteParams.srcTokenAddress,
+            toToken: quoteParams.dstTokenAddress,
+            fromAmount: quoteParams.amount,
+            chainId: quoteParams.srcChainId,
+            status: 'pending' as const,
+            createdAt: new Date(),
+            updatedAt: new Date()
+          };
+
+          await this.db.createTransaction(transaction);
+
+          // Get token info for display
+          const fromTokenInfo = SUPPORTED_TOKENS.find(t => 
+            t.address.toLowerCase() === quoteParams.srcTokenAddress.toLowerCase() && 
+            t.chainId === quoteParams.srcChainId
+          );
+          const toTokenInfo = SUPPORTED_TOKENS.find(t => 
+            t.address.toLowerCase() === quoteParams.dstTokenAddress.toLowerCase() && 
+            t.chainId === quoteParams.dstChainId
+          );
+
+          const fromAmount = fromTokenInfo ? 
+            ethers.formatUnits(quoteParams.amount, fromTokenInfo.decimals) : 
+            'Unknown';
+
+          // Clean up the stored quote
+          this.quoteStorage.delete(quoteId);
+
+          this.bot.editMessageText(
+            `✅ Trade Executed Successfully!\n\n` +
+            `Swapped: ${fromAmount} ${fromTokenInfo?.symbol || 'Unknown'}\n` +
+            `For: ${toTokenInfo?.symbol || 'Unknown'}\n` +
+            `Network: ${CHAIN_NAMES[quoteParams.srcChainId] || 'Unknown'}\n\n` +
+            `Order ID: ${orderResult.orderId}\n` +
+            `Status: ${orderResult.status}\n\n` +
+            `🎉 Your trade has been submitted to the blockchain!`,
+            {
+              chat_id: chatId,
+              message_id: query.message?.message_id
+            }
+          );
+
+        } catch (error) {
+          console.error('Error executing quote trade:', error);
+          
+          this.bot.editMessageText(
+            `❌ Trade Failed\n\n` +
+            `Error: ${error instanceof Error ? error.message : 'Unknown error'}\n\n` +
+            `Please try getting a new quote with /quote command.`,
+            {
+              chat_id: chatId,
+              message_id: query.message?.message_id
+            }
+          );
         }
       }
     });

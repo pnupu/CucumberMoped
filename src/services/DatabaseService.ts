@@ -221,18 +221,54 @@ export class DatabaseService {
             const transactions = rows.map(row => ({
               id: row.id,
               userId: row.user_id,
-              type: row.type,
+              type: row.type as 'deposit' | 'withdraw' | 'swap',
               fromToken: row.from_token,
               toToken: row.to_token,
               fromAmount: row.from_amount,
               toAmount: row.to_amount,
               chainId: row.chain_id,
-              status: row.status,
+              status: row.status as 'pending' | 'completed' | 'failed',
               txHash: row.tx_hash,
               createdAt: new Date(row.created_at),
               updatedAt: new Date(row.updated_at)
             }));
             resolve(transactions);
+          }
+        }
+      );
+    });
+  }
+
+  // Alias for getUserTransactions for consistency
+  async getTransactionHistory(userId: number, limit: number = 50): Promise<Transaction[]> {
+    return this.getUserTransactions(userId, limit);
+  }
+
+  // Get transaction by ID
+  async getTransactionById(transactionId: string): Promise<Transaction | null> {
+    return new Promise((resolve, reject) => {
+      this.db.get(
+        'SELECT * FROM transactions WHERE id = ?',
+        [transactionId],
+        (err, row: any) => {
+          if (err) reject(err);
+          else if (row) {
+            resolve({
+              id: row.id,
+              userId: row.user_id,
+              type: row.type as 'deposit' | 'withdraw' | 'swap',
+              fromToken: row.from_token,
+              toToken: row.to_token,
+              fromAmount: row.from_amount,
+              toAmount: row.to_amount,
+              chainId: row.chain_id,
+              status: row.status as 'pending' | 'completed' | 'failed',
+              txHash: row.tx_hash,
+              createdAt: new Date(row.created_at),
+              updatedAt: new Date(row.updated_at)
+            });
+          } else {
+            resolve(null);
           }
         }
       );
