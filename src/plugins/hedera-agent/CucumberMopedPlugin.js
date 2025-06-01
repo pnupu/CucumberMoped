@@ -37,6 +37,28 @@ class CucumberMopedPlugin {
           try {
             console.log(`🥒 [PORTFOLIO TOOL] Called with input:`, input);
             
+            // Handle various input formats - LangChain might pass "None" as string
+            let parsedInput = {};
+            if (typeof input === 'string') {
+              try {
+                // Try to parse as JSON if it's not "None" or similar
+                if (input !== 'None' && input !== 'none' && input !== '{}' && input !== '') {
+                  parsedInput = JSON.parse(input);
+                } else {
+                  parsedInput = {}; // Treat as no input
+                }
+              } catch (e) {
+                console.log(`🥒 [PORTFOLIO TOOL] String input is not JSON, treating as no input: "${input}"`);
+                parsedInput = {};
+              }
+            } else if (typeof input === 'object' && input !== null) {
+              parsedInput = input;
+            } else {
+              parsedInput = {};
+            }
+            
+            console.log(`🥒 [PORTFOLIO TOOL] Parsed input:`, parsedInput);
+            
             // Use userContext from plugin instead of parsing input
             const userContext = this.context.userContext;
             console.log(`🥒 [PORTFOLIO TOOL] User context:`, userContext);
