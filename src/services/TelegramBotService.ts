@@ -1457,6 +1457,7 @@ Ready to verify? 🚀`;
 **Trading Commands:**
 /quote [amount] [token1] [token2] - Get live price quote + instant buy
 /buy [token] [amount] - Buy tokens with USDC
+/buycontract [chain] [address] [amount] - Buy tokens with address
 /sell [amount] [token] [to_token] - Sell tokens
 /balance - Show token balances
 /orders - Check active/recent orders
