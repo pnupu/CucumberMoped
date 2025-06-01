@@ -504,7 +504,6 @@ export class BlockchainService {
       const orderResult = await this.oneInchService.placeOrder(
         quoteParams,
         encryptedPrivateKey,
-        1 // 1% slippage
       );
 
       return {
