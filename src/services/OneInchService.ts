@@ -13,23 +13,21 @@ export class OneInchService implements IOneInchService {
   protected apiKey: string;
 
   constructor(apiUrl: string, authKey: string, walletService: WalletService) {
-    // Use localhost proxy instead of Vercel proxy
-    const proxyUrl = 'http://localhost:3013';
-    
-    // Cross-chain SDK for cross-chain swaps
+    // Use the actual 1inch API URL for the cross-chain SDK
+    // The SDK should handle its own HTTP requests
     this.crossChainSDK = new SDK({
-      url: proxyUrl,
-      authKey: authKey // Use the actual auth key with localhost proxy
+      url: 'https://api.1inch.dev/fusion-plus',
+      authKey: authKey
     });
-
+  
     // Initialize Fusion SDKs for same-chain swaps
-    this.initializeFusionSDKs(authKey, proxyUrl);
+    this.initializeFusionSDKs(authKey);
     
     this.walletService = walletService;
     this.apiKey = authKey;
   }
 
-  private initializeFusionSDKs(authKey: string, proxyUrl: string): void {
+  private initializeFusionSDKs(authKey: string): void {
     // Initialize Fusion SDKs for each supported network
     const networkMappings = [
       { chainId: 1, fusionNetwork: 1 }, // Ethereum
@@ -42,13 +40,13 @@ export class OneInchService implements IOneInchService {
       { chainId: 324, fusionNetwork: 324 }, // zkSync
       { chainId: 59144, fusionNetwork: 59144 } // Linea
     ];
-
+  
     for (const { chainId, fusionNetwork } of networkMappings) {
       try {
         const fusionSDK = new FusionSDK({
-          url: proxyUrl,
+          url: 'https://api.1inch.dev/fusion',
           network: fusionNetwork,
-          authKey: authKey // Use the actual auth key with localhost proxy
+          authKey: authKey
         });
         this.fusionSDKs.set(chainId, fusionSDK);
         console.log(`✅ Initialized Fusion SDK for chain ${chainId}`);
@@ -453,179 +451,190 @@ export class OneInchService implements IOneInchService {
   /**
  * Place cross-chain Fusion+ order using direct API calls and minimal SDK usage
  */
-private async placeCrossChainOrder(
-  quoteParams: OneInchQuoteParams,
-  encryptedPrivateKey: string,
-  slippage: number = 1
-): Promise<OneInchOrderResult> {
-  console.log('🌉 Placing cross-chain Fusion+ order via direct API');
-
-  try {
-    // Step 1: Decrypt the private key
-    const privateKey = this.walletService.decrypt(encryptedPrivateKey);
-    const wallet = new ethers.Wallet(privateKey);
-    
-    console.log(`📝 Using wallet address: ${wallet.address}`);
-
-    // Step 2: Get a fresh quote using direct API call (not SDK)
-    console.log('🔍 Getting fresh quote for order placement via proxy...');
-    
-    // Build the target API URL with query parameters
-    const apiParams = new URLSearchParams({
-      srcChain: quoteParams.srcChainId.toString(),
-      dstChain: quoteParams.dstChainId.toString(),
-      srcTokenAddress: quoteParams.srcTokenAddress,
-      dstTokenAddress: quoteParams.dstTokenAddress,
-      amount: quoteParams.amount,
-      walletAddress: quoteParams.walletAddress,
-      enableEstimate: 'true',
-      source: 'sdk'
-    });
-
-    const targetApiUrl = `https://api.1inch.dev/fusion-plus/quoter/v1.0/quote/receive?${apiParams.toString()}`;
-    
-    // Build the proxy request URL
-    const proxyUrl = 'http://localhost:3013';
-    const proxyParams = new URLSearchParams({
-      url: targetApiUrl
-    });
-    const fullProxyUrl = `${proxyUrl}?${proxyParams.toString()}`;
-
-    const headers: Record<string, string> = {
-      'accept': 'application/json',
-      'Authorization': `Bearer ${this.apiKey}`
-    };
-
-    // Get quote via proxy
-    const quoteResponse = await axios.get(fullProxyUrl, { headers });
-    const quoteData = quoteResponse.data;
-    
-    console.log('✅ Quote received via proxy, preparing order...');
-
-    // Step 3: Extract quote information
-    if (!quoteData || typeof quoteData !== 'object') {
-      throw new Error('Invalid quote response received');
-    }
-
-    // For Fusion+ orders, we need to create the order data manually
-    // since we're bypassing the SDK for the quote part
-    
-    // Generate secrets for hash lock
-    const secretsCount = quoteData.secretsCount || 1;
-    console.log(`🔐 Generating ${secretsCount} secrets for hash lock...`);
-    
-    const secrets = Array.from({ length: secretsCount }).map(() => this.getRandomBytes32());
-    
-    // Import the HashLock utility from the SDK
-    const { HashLock } = await import('@1inch/cross-chain-sdk');
-    
-    // Create secret hashes
-    const secretHashes = secrets.map((secret) => HashLock.hashSecret(secret));
-    
-    // Create hash lock based on number of secrets
-    let hashLock;
-    if (secretsCount === 1) {
-      hashLock = HashLock.forSingleFill(secrets[0]);
-    } else {
-      // For multiple fills, create merkle leaves
-      const { solidityPackedKeccak256 } = await import('ethers');
-      const merkleLeaves = secretHashes.map((secretHash, i) =>
-        solidityPackedKeccak256(["uint64", "bytes32"], [i, secretHash.toString()])
-      );
-      hashLock = HashLock.forMultipleFills(merkleLeaves as any);
-    }
-
-    console.log('🎯 Hash lock created, preparing order submission...');
-
-    // Step 4: Create order data for API submission
-    const orderData = {
-      srcChainId: quoteParams.srcChainId,
-      dstChainId: quoteParams.dstChainId,
-      srcTokenAddress: quoteParams.srcTokenAddress,
-      dstTokenAddress: quoteParams.dstTokenAddress,
-      amount: quoteParams.amount,
-      walletAddress: quoteParams.walletAddress,
-      hashLock: hashLock.toString(),
-      secretHashes: secretHashes.map(hash => hash.toString()),
-      // Include any other required fields from the quote
-      ...quoteData
-    };
-
-    // Step 5: Submit order via API
-    console.log('📋 Submitting order via proxy...');
-    
-    const orderApiUrl = `https://api.1inch.dev/fusion-plus/order/v1.0/order`;
-    const orderProxyParams = new URLSearchParams({
-      url: orderApiUrl
-    });
-    const orderProxyUrl = `${proxyUrl}?${orderProxyParams.toString()}`;
-
-    // Note: This might need to be a POST request with the order data in the body
-    // The exact API endpoint and format would need to be confirmed from 1inch docs
+  private async placeCrossChainOrder(
+    quoteParams: OneInchQuoteParams,
+    encryptedPrivateKey: string,
+    slippage: number = 1
+  ): Promise<OneInchOrderResult> {
+    console.log('🌉 Placing cross-chain Fusion+ order via SDK');
+  
     try {
-      const orderResponse = await axios.post(orderProxyUrl, orderData, { headers });
-      const orderResult = orderResponse.data;
+      // Step 1: Decrypt the private key
+      const privateKey = this.walletService.decrypt(encryptedPrivateKey);
+      const wallet = new ethers.Wallet(privateKey);
       
-      console.log('✅ Order submitted successfully via proxy!');
+      console.log(`📝 Using wallet address: ${wallet.address}`);
+  
+      // Step 2: Get a fresh quote using direct API call (avoiding SDK proxy issues)
+      console.log('🔍 Getting fresh quote for order placement via proxy...');
       
+      const quote = await this.getCrossChainQuote(quoteParams);
+      console.log('✅ Quote received via proxy, preparing order...');
+  
+      // Step 3: Get the quote using SDK for order creation (this should work now with proper setup)
+      const sdkQuote = await this.crossChainSDK.getQuote({
+        srcChainId: quoteParams.srcChainId,
+        dstChainId: quoteParams.dstChainId,
+        srcTokenAddress: quoteParams.srcTokenAddress,
+        dstTokenAddress: quoteParams.dstTokenAddress,
+        amount: quoteParams.amount,
+        walletAddress: quoteParams.walletAddress,
+        enableEstimate: true
+      });
+  
+      console.log('✅ SDK Quote received, preparing order...');
+  
+      // Step 4: Get preset information
+      const preset = sdkQuote.getPreset();
+      const secretsCount = preset.secretsCount || 1;
+      
+      console.log(`🔐 Generating ${secretsCount} secrets for hash lock...`);
+      
+      // Step 5: Generate secrets and create hash lock
+      const secrets = Array.from({ length: secretsCount }).map(() => this.getRandomBytes32());
+      
+      // Import HashLock from the SDK
+      const { HashLock } = await import('@1inch/cross-chain-sdk');
+      
+      // Create hash lock based on the number of secrets
+      let hashLock;
+      if (secretsCount === 1) {
+        hashLock = HashLock.forSingleFill(secrets[0]);
+      } else {
+        // For multiple fills, create merkle leaves
+        const merkleLeaves = HashLock.getMerkleLeaves(secrets);
+        hashLock = HashLock.forMultipleFills(merkleLeaves);
+      }
+      
+      // Create secret hashes
+      const secretHashes = secrets.map((secret) => HashLock.hashSecret(secret));
+  
+      console.log('🎯 Hash lock created, creating order...');
+  
+      // Step 6: Create the order
+      const orderParams = {
+        walletAddress: quoteParams.walletAddress,
+        hashLock: hashLock,
+        preset: preset,
+        source: 'sdk',
+        secretHashes: secretHashes
+      };
+  
+      const { hash, quoteId, order } = await this.crossChainSDK.createOrder(sdkQuote, orderParams);
+      
+      console.log('📋 Order created with hash:', hash);
+  
+      // Step 7: Submit the order
+      console.log('📤 Submitting order to network...');
+      
+      const orderInfo = await this.crossChainSDK.submitOrder(
+        quoteParams.srcChainId,
+        order,
+        quoteId,
+        secretHashes
+      );
+      
+      console.log('✅ Order submitted successfully!', { hash });
+  
+      // Step 8: Start the secret sharing process (optional - could be done in background)
+      // Note: This is typically done in a separate process/background task
+      this.startSecretSharingProcess(hash, secrets).catch(error => {
+        console.error('❌ Error in secret sharing process:', error);
+      });
+  
       return {
-        orderId: orderResult.orderHash || orderResult.id || ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify(orderResult))),
+        orderId: hash,
         status: 'submitted',
-        txHash: orderResult.txHash
+        secrets: secrets, // Store secrets for later use
+        secretHashes: secretHashes.map(h => h.toString())
       };
-    } catch (orderError) {
-      console.warn('❌ Direct order submission failed, falling back to SDK method...');
+  
+    } catch (error) {
+      console.error('❌ Error placing cross-chain order:', error);
       
-      // Fallback: Try to use the SDK's createOrder method with the quote data
-      // This is more complex and might require reconstructing a quote object
-      
-      // For now, return a simulated result
-      const simulatedOrderId = ethers.keccak256(ethers.toUtf8Bytes(
-        `${quoteParams.srcTokenAddress}-${quoteParams.dstTokenAddress}-${Date.now()}`
-      ));
-      
-      console.log('⚠️ Note: Order submission not fully implemented - would need exact 1inch API specification');
-      
-      return {
-        orderId: simulatedOrderId,
-        status: 'created'
-      };
-    }
-
-  } catch (error) {
-    console.error('❌ Error placing cross-chain order:', error);
-    
-    // Handle specific error types
-    if (error instanceof Error) {
-      if (error.message.includes('insufficient balance')) {
-        throw new Error('Insufficient balance for cross-chain swap. Please check your wallet balance.');
-      }
-      if (error.message.includes('token not supported')) {
-        throw new Error('Token not supported for cross-chain swaps on 1inch Fusion+.');
-      }
-      if (error.message.includes('chain not supported')) {
-        throw new Error('Chain combination not supported for cross-chain swaps.');
-      }
-      if (error.message.includes('amount too small')) {
-        throw new Error('Minimum swap amount not met. Try with a larger amount.');
-      }
-    }
-    
-    // Handle HTTP errors from proxy
-    if (error && typeof error === 'object' && 'response' in error) {
-      const axiosError = error as any;
-      if (axiosError.response?.status === 400) {
-        const errorData = axiosError.response?.data;
-        if (typeof errorData === 'string' && errorData.includes('Include `url`')) {
-          throw new Error('❌ Proxy configuration error: URL parameter format issue');
+      // Handle specific error types
+      if (error instanceof Error) {
+        if (error.message.includes('insufficient balance')) {
+          throw new Error('Insufficient balance for cross-chain swap. Please check your wallet balance.');
         }
-        throw new Error(`Invalid parameters: ${errorData?.description || 'Bad request'}`);
+        if (error.message.includes('insufficient allowance')) {
+          throw new Error('Insufficient token allowance. Please approve the token for the 1inch Limit Order Protocol contract.');
+        }
+        if (error.message.includes('token not supported')) {
+          throw new Error('Token not supported for cross-chain swaps on 1inch Fusion+.');
+        }
+        if (error.message.includes('chain not supported')) {
+          throw new Error('Chain combination not supported for cross-chain swaps.');
+        }
+        if (error.message.includes('amount too small')) {
+          throw new Error('Minimum swap amount not met. Try with a larger amount.');
+        }
+      }
+      
+      throw new Error(`Failed to place cross-chain order: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+  
+  /**
+   * Background process to share secrets as escrows are deployed
+   */
+  private async startSecretSharingProcess(orderHash: string, secrets: string[]): Promise<void> {
+    console.log('🔄 Starting secret sharing process for order:', orderHash);
+    
+    const maxAttempts = 60; // 5 minutes with 5-second intervals
+    let attempts = 0;
+    
+    while (attempts < maxAttempts) {
+      try {
+        // Check for ready-to-accept secret fills
+        const secretsToShare = await this.crossChainSDK.getReadyToAcceptSecretFills(orderHash);
+        
+        if (secretsToShare.fills && secretsToShare.fills.length > 0) {
+          console.log(`🔓 Found ${secretsToShare.fills.length} fills ready for secrets`);
+          
+          // Submit secrets for each ready fill
+          for (const { idx } of secretsToShare.fills) {
+            try {
+              await this.crossChainSDK.submitSecret(orderHash, secrets[idx]);
+              console.log(`✅ Shared secret for fill index ${idx}`);
+            } catch (secretError) {
+              console.error(`❌ Failed to share secret for fill ${idx}:`, secretError);
+            }
+          }
+        }
+        
+        // Check order status
+        const { status } = await this.crossChainSDK.getOrderStatus(orderHash);
+        
+        console.log(`📊 Order ${orderHash} status: ${status}`);
+        
+        // Import OrderStatus enum
+        const { OrderStatus } = await import('@1inch/cross-chain-sdk');
+        
+        if (
+          status === OrderStatus.Executed || 
+          status === OrderStatus.Expired || 
+          status === OrderStatus.Refunded
+        ) {
+          console.log('🏁 Order completed with status:', status);
+          break;
+        }
+        
+        // Wait 5 seconds before next check
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        attempts++;
+        
+      } catch (error) {
+        console.error('❌ Error in secret sharing iteration:', error);
+        attempts++;
+        await new Promise(resolve => setTimeout(resolve, 5000));
       }
     }
     
-    throw new Error(`Failed to place cross-chain order: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    if (attempts >= maxAttempts) {
+      console.warn('⚠️ Secret sharing process timed out for order:', orderHash);
+    }
   }
-}
 
   /**
    * Get active orders for a wallet (from both Fusion and Fusion+ SDKs)
