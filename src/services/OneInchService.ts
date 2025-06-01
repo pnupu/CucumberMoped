@@ -525,9 +525,20 @@ export class OneInchService implements IOneInchService {
       
       console.log('📋 Order created with hash:', hash);
 
-      // Step 7: Generate the order signature manually
+      // Step 7: Try multiple signing approaches
       console.log('✍️ Generating order signature...');
-      const signature = await this.signOrder(order, wallet, quoteParams.srcChainId);
+      let signature: string;
+      
+      try {
+        // First, try SDK built-in signing
+        signature = await this.signOrderWithSDK(order, wallet);
+        console.log('✅ Order signed using SDK method');
+      } catch (sdkSignError) {
+        console.log('⚠️ SDK signing failed, trying manual EIP-712 signing...');
+        // Fallback to manual signing
+        signature = await this.signOrder(order, wallet, quoteParams.srcChainId);
+        console.log('✅ Order signed using manual method');
+      }
       
       // Add signature to the order
       const signedOrder = {
@@ -672,77 +683,163 @@ export class OneInchService implements IOneInchService {
   }
 
   /**
-   * Sign the order using EIP-712 typed data signing
+   * Sign the order using EIP-712 typed data signing - FIXED VERSION
    */
   private async signOrder(order: any, wallet: ethers.Wallet, chainId: number): Promise<string> {
     try {
-      // Get the typed data for signing from the order
-      let typedData;
+      console.log('🔍 Checking if order has getTypedData method...');
       
+      // First, try to use the SDK's built-in signing method if available
       if (typeof order.getTypedData === 'function') {
-        // If the order has a getTypedData method, use it
-        typedData = order.getTypedData();
-      } else {
-        // Otherwise, construct the typed data manually
-        typedData = {
-          domain: {
-            name: '1inch Fusion+',
-            version: '1',
-            chainId: chainId,
-            verifyingContract: '0xa7bcb4eac8964306f9e3764f67db6a7af6ddf99a' // Settlement contract
-          },
-          types: {
-            Order: [
-              { name: 'maker', type: 'address' },
-              { name: 'makerAsset', type: 'address' },
-              { name: 'takerAsset', type: 'address' },
-              { name: 'makingAmount', type: 'uint256' },
-              { name: 'takingAmount', type: 'uint256' },
-              { name: 'salt', type: 'uint256' },
-              { name: 'makerTraits', type: 'uint256' },
-              { name: 'receiver', type: 'address' },
-              { name: 'extension', type: 'bytes' }
-            ]
-          },
-          message: this.extractOrderDataForSigning(order)
-        };
+        console.log('✅ Using order.getTypedData() method');
+        const typedData = order.getTypedData();
+        
+        // Sign using the SDK's typed data
+        const signature = await wallet.signTypedData(
+          typedData.domain,
+          typedData.types,
+          typedData.message
+        );
+        
+        console.log('📝 Order signature generated via SDK method:', signature);
+        return signature;
       }
-
+      
+      console.log('⚠️ Order does not have getTypedData method, constructing manually...');
+      
+      // Extract order data for signing
+      const orderData = this.extractOrderDataForSigning(order);
+      console.log('📋 Order data extracted:', orderData);
+      
+      // Construct the EIP-712 typed data manually
+      const domain = {
+        name: '1inch Fusion+',
+        version: '1',
+        chainId: chainId,
+        verifyingContract: '0xa7bcb4eac8964306f9e3764f67db6a7af6ddf99a' // Settlement contract
+      };
+      
+      // Define the Order type structure (without EIP712Domain)
+      const types = {
+        Order: [
+          { name: 'salt', type: 'uint256' },
+          { name: 'maker', type: 'address' },
+          { name: 'receiver', type: 'address' },
+          { name: 'makerAsset', type: 'address' },
+          { name: 'takerAsset', type: 'address' },
+          { name: 'makingAmount', type: 'uint256' },
+          { name: 'takingAmount', type: 'uint256' },
+          { name: 'makerTraits', type: 'uint256' }
+        ]
+      };
+      
+      console.log('📝 Signing with domain:', domain);
+      console.log('📝 Signing with types:', types);
+      console.log('📝 Signing with message:', orderData);
+      
       // Sign the typed data
-      const signature = await wallet.signTypedData(
-        typedData.domain,
-        typedData.types,
-        typedData.message
-      );
-
-      console.log('📝 Order signature generated:', signature);
+      const signature = await wallet.signTypedData(domain, types, orderData);
+      
+      console.log('📝 Order signature generated manually:', signature);
       return signature;
 
     } catch (error) {
       console.error('❌ Error signing order:', error);
-      throw new Error(`Failed to sign order: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      
+      // If manual signing fails, try a simplified approach
+      console.log('🔄 Attempting simplified signing approach...');
+      
+      try {
+        // Use the SDK's order hash and sign it directly
+        const orderHash = this.getOrderHash(order, chainId);
+        const signature = await wallet.signMessage(ethers.getBytes(orderHash));
+        
+        console.log('📝 Order signature generated via message signing:', signature);
+        return signature;
+        
+      } catch (fallbackError) {
+        console.error('❌ Fallback signing also failed:', fallbackError);
+        throw new Error(`Failed to sign order: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
     }
   }
 
   /**
-   * Extract order data for EIP-712 signing
+   * Alternative: Try to use the SDK's built-in signing if available
+   */
+  private async signOrderWithSDK(order: any, wallet: ethers.Wallet): Promise<string> {
+    try {
+      // Check if the order has a sign method
+      if (typeof order.sign === 'function') {
+        console.log('✅ Using order.sign() method');
+        return await order.sign(wallet.privateKey);
+      }
+      
+      // Check if the order has a signTypedData method
+      if (typeof order.signTypedData === 'function') {
+        console.log('✅ Using order.signTypedData() method');
+        return await order.signTypedData(wallet);
+      }
+      
+      throw new Error('No built-in signing method available');
+      
+    } catch (error) {
+      console.error('❌ SDK signing not available:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get order hash for fallback signing
+   */
+  private getOrderHash(order: any, chainId: number): string {
+    try {
+      // If the order has a hash method, use it
+      if (typeof order.hash === 'function') {
+        return order.hash();
+      }
+      
+      // If the order has a getTypedDataHash method, use it
+      if (typeof order.getTypedDataHash === 'function') {
+        return order.getTypedDataHash();
+      }
+      
+      // Otherwise, create a simple hash from order data
+      const orderData = this.extractOrderDataForSigning(order);
+      const dataString = JSON.stringify(orderData);
+      return ethers.keccak256(ethers.toUtf8Bytes(dataString));
+      
+    } catch (error) {
+      console.error('❌ Error getting order hash:', error);
+      // Fallback to a hash of the entire order object
+      return ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify(order)));
+    }
+  }
+
+  /**
+   * Extract order data for EIP-712 signing - IMPROVED VERSION
    */
   private extractOrderDataForSigning(order: any): any {
     try {
       // Extract the core order data for signing
       const orderData = {
-        maker: order.inner?.inner?.maker?.val || order.maker?.val || order.maker,
-        makerAsset: order.inner?.inner?.makerAsset?.val || order.makerAsset?.val || order.makerAsset,
-        takerAsset: order.inner?.inner?.takerAsset?.val || order.takerAsset?.val || order.takerAsset,
-        makingAmount: order.inner?.inner?.makingAmount || order.makingAmount,
-        takingAmount: order.inner?.inner?.takingAmount || order.takingAmount,
-        salt: order.inner?.inner?._salt || order._salt || order.salt,
-        makerTraits: order.inner?.inner?.makerTraits?.value?.value || order.makerTraits?.value || order.makerTraits,
-        receiver: order.inner?.inner?.receiver?.val || order.receiver?.val || order.receiver || '0x0000000000000000000000000000000000000000',
-        extension: order.inner?.inner?.extension || order.extension || '0x'
+        salt: order.inner?.inner?._salt || order._salt || order.salt || "0",
+        maker: order.inner?.inner?.maker?.val || order.maker?.val || order.maker || ethers.ZeroAddress,
+        receiver: order.inner?.inner?.receiver?.val || order.receiver?.val || order.receiver || ethers.ZeroAddress,
+        makerAsset: order.inner?.inner?.makerAsset?.val || order.makerAsset?.val || order.makerAsset || ethers.ZeroAddress,
+        takerAsset: order.inner?.inner?.takerAsset?.val || order.takerAsset?.val || order.takerAsset || ethers.ZeroAddress,
+        makingAmount: order.inner?.inner?.makingAmount || order.makingAmount || "0",
+        takingAmount: order.inner?.inner?.takingAmount || order.takingAmount || "0",
+        makerTraits: order.inner?.inner?.makerTraits?.value?.value || order.makerTraits?.value || order.makerTraits || "0"
       };
 
-      console.log('📋 Extracted order data for signing:', orderData);
+      // Ensure all numeric values are strings
+      orderData.salt = orderData.salt.toString();
+      orderData.makingAmount = orderData.makingAmount.toString();
+      orderData.takingAmount = orderData.takingAmount.toString();
+      orderData.makerTraits = orderData.makerTraits.toString();
+
+      console.log('📋 Extracted and formatted order data for signing:', orderData);
       return orderData;
 
     } catch (error) {
