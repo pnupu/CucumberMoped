@@ -451,79 +451,79 @@ export class OneInchService implements IOneInchService {
 
   /**
    * Place cross-chain Fusion+ order with proper signature generation
-   */
-  private async placeCrossChainOrder(
-    quoteParams: OneInchQuoteParams,
-    encryptedPrivateKey: string,
-    slippage: number = 1
-  ): Promise<OneInchOrderResult> {
+ */
+private async placeCrossChainOrder(
+  quoteParams: OneInchQuoteParams,
+  encryptedPrivateKey: string,
+  slippage: number = 1
+): Promise<OneInchOrderResult> {
     console.log('🌉 Placing cross-chain Fusion+ order via SDK + Manual Submission');
 
-    try {
-      // Step 1: Decrypt the private key
-      const privateKey = this.walletService.decrypt(encryptedPrivateKey);
-      const wallet = new ethers.Wallet(privateKey);
-      
-      console.log(`📝 Using wallet address: ${wallet.address}`);
+  try {
+    // Step 1: Decrypt the private key
+    const privateKey = this.walletService.decrypt(encryptedPrivateKey);
+    const wallet = new ethers.Wallet(privateKey);
+    
+    console.log(`📝 Using wallet address: ${wallet.address}`);
 
       // Step 2: Create SDK instance with blockchain provider
       console.log('🔧 Creating SDK instance with blockchain provider...');
       const sdkWithProvider = this.createSDKWithProvider(privateKey, quoteParams.srcChainId);
-
+    
       // Step 3: Get quote using the SDK with provider
       console.log('🔍 Getting fresh quote for order placement via SDK...');
-      
+
       const sdkQuote = await sdkWithProvider.getQuote({
-        srcChainId: quoteParams.srcChainId,
-        dstChainId: quoteParams.dstChainId,
-        srcTokenAddress: quoteParams.srcTokenAddress,
-        dstTokenAddress: quoteParams.dstTokenAddress,
-        amount: quoteParams.amount,
-        walletAddress: quoteParams.walletAddress,
-        enableEstimate: true
-      });
+      srcChainId: quoteParams.srcChainId,
+      dstChainId: quoteParams.dstChainId,
+      srcTokenAddress: quoteParams.srcTokenAddress,
+      dstTokenAddress: quoteParams.dstTokenAddress,
+      amount: quoteParams.amount,
+      walletAddress: quoteParams.walletAddress,
+      enableEstimate: true
+    });
 
-      console.log('✅ SDK Quote received, preparing order...');
+    console.log('✅ SDK Quote received, preparing order...');
 
-      // Step 4: Get preset information
-      const preset = sdkQuote.getPreset();
-      const secretsCount = preset.secretsCount || 1;
-      
-      console.log(`🔐 Generating ${secretsCount} secrets for hash lock...`);
-      
-      // Step 5: Generate secrets and create hash lock
-      const secrets = Array.from({ length: secretsCount }).map(() => this.getRandomBytes32());
-      
-      // Import HashLock and PresetEnum from the SDK
-      const { HashLock, PresetEnum } = await import('@1inch/cross-chain-sdk');
-      
-      // Create hash lock based on the number of secrets
-      let hashLock;
-      if (secretsCount === 1) {
-        hashLock = HashLock.forSingleFill(secrets[0]);
-      } else {
-        // For multiple fills, create merkle leaves
-        const merkleLeaves = HashLock.getMerkleLeaves(secrets);
-        hashLock = HashLock.forMultipleFills(merkleLeaves);
-      }
-      
-      // Create secret hashes
-      const secretHashes = secrets.map((secret) => HashLock.hashSecret(secret));
+    // Step 4: Get preset information
+    const preset = sdkQuote.getPreset();
+    const secretsCount = preset.secretsCount || 1;
+    
+    console.log(`🔐 Generating ${secretsCount} secrets for hash lock...`);
+    
+    // Step 5: Generate secrets and create hash lock
+    const secrets = Array.from({ length: secretsCount }).map(() => this.getRandomBytes32());
+    
+    // Import HashLock and PresetEnum from the SDK
+    const { HashLock, PresetEnum } = await import('@1inch/cross-chain-sdk');
+    
+    // Create hash lock based on the number of secrets
+    let hashLock;
+    if (secretsCount === 1) {
+      hashLock = HashLock.forSingleFill(secrets[0]);
+    } else {
+      // For multiple fills, create merkle leaves
+      const merkleLeaves = HashLock.getMerkleLeaves(secrets);
+      hashLock = HashLock.forMultipleFills(merkleLeaves);
+    }
+    
+    // Create secret hashes
+    const secretHashes = secrets.map((secret) => HashLock.hashSecret(secret));
 
-      console.log('🎯 Hash lock created, creating order...');
+    console.log('🎯 Hash lock created, creating order...');
 
       // Step 6: Create the order using the SDK
-      const orderParams = {
-        walletAddress: quoteParams.walletAddress,
-        hashLock: hashLock,
+    const orderParams = {
+      walletAddress: quoteParams.walletAddress,
+      hashLock: hashLock,
         preset: PresetEnum.fast,
-        source: 'sdk',
-        secretHashes: secretHashes
-      };
+      source: 'sdk',
+      secretHashes: secretHashes
+    };
 
       const { hash, quoteId, order } = await sdkWithProvider.createOrder(sdkQuote, orderParams);
-      
-      console.log('📋 Order created with hash:', hash);
+    
+    console.log('📋 Order created with hash:', hash);
 
       // Step 7: Try multiple signing approaches
       console.log('✍️ Generating order signature...');
@@ -553,58 +553,58 @@ export class OneInchService implements IOneInchService {
       
       const orderSubmissionResult = await this.submitOrderViaProxy(
         signedOrder,
-        quoteId,
+      quoteId,
         secretHashes,
         quoteParams.srcChainId
-      );
-      
+    );
+    
       console.log('✅ Order submitted successfully via proxy!', { hash });
 
       // Step 9: Start the secret sharing process
       this.startSecretSharingProcess(hash, secrets, sdkWithProvider).catch(error => {
-        console.error('❌ Error in secret sharing process:', error);
-      });
+      console.error('❌ Error in secret sharing process:', error);
+    });
 
-      const result: OneInchOrderResult = {
-        orderId: hash,
-        status: 'submitted'
-      };
+    const result: OneInchOrderResult = {
+      orderId: hash,
+      status: 'submitted'
+    };
 
       // Store secrets as additional properties
-      (result as any).secrets = secrets;
-      (result as any).secretHashes = secretHashes.map(h => h.toString());
+    (result as any).secrets = secrets;
+    (result as any).secretHashes = secretHashes.map(h => h.toString());
 
-      return result;
+    return result;
 
-    } catch (error) {
-      console.error('❌ Error placing cross-chain order:', error);
-      
-      // Handle specific error types
-      if (error instanceof Error) {
-        if (error.message.includes('insufficient balance')) {
-          throw new Error('Insufficient balance for cross-chain swap. Please check your wallet balance.');
-        }
-        if (error.message.includes('insufficient allowance')) {
-          throw new Error('Insufficient token allowance. Please approve the token for the 1inch Limit Order Protocol contract.');
-        }
-        if (error.message.includes('token not supported')) {
-          throw new Error('Token not supported for cross-chain swaps on 1inch Fusion+.');
-        }
-        if (error.message.includes('chain not supported')) {
-          throw new Error('Chain combination not supported for cross-chain swaps.');
-        }
-        if (error.message.includes('amount too small')) {
-          throw new Error('Minimum swap amount not met. Try with a larger amount.');
-        }
+  } catch (error) {
+    console.error('❌ Error placing cross-chain order:', error);
+    
+    // Handle specific error types
+    if (error instanceof Error) {
+      if (error.message.includes('insufficient balance')) {
+        throw new Error('Insufficient balance for cross-chain swap. Please check your wallet balance.');
+      }
+      if (error.message.includes('insufficient allowance')) {
+        throw new Error('Insufficient token allowance. Please approve the token for the 1inch Limit Order Protocol contract.');
+      }
+      if (error.message.includes('token not supported')) {
+        throw new Error('Token not supported for cross-chain swaps on 1inch Fusion+.');
+      }
+      if (error.message.includes('chain not supported')) {
+        throw new Error('Chain combination not supported for cross-chain swaps.');
+      }
+      if (error.message.includes('amount too small')) {
+        throw new Error('Minimum swap amount not met. Try with a larger amount.');
+      }
         if (error.message.includes('blockchainProvider has not set')) {
           throw new Error('Blockchain provider configuration error. Unable to sign transactions.');
         }
-      }
-      
-      throw new Error(`Failed to place cross-chain order: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
+    
+    throw new Error(`Failed to place cross-chain order: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
-
+}
+  
   /**
    * Submit order manually via proxy to bypass SDK's direct API calls
    */
@@ -1079,12 +1079,16 @@ export class OneInchService implements IOneInchService {
         
         return { status, raw: response.data };
         
-      } catch (error) {
-        console.log(`❌ Status endpoint ${apiUrl} failed:`, error.response?.status, error.response?.data);
+      } catch (error: unknown) {
+        if (error instanceof Error && 'response' in error) {
+          const axiosError = error as { response?: { status: number; data: any } };
+          console.log(`❌ Status endpoint ${apiUrl} failed:`, axiosError.response?.status, axiosError.response?.data);
+        } else {
+          console.log(`❌ Status endpoint ${apiUrl} failed:`, error);
+        }
         continue; // Try next endpoint
       }
     }
-    
     // If all endpoints fail, return pending
     console.warn('⚠️ All status endpoints failed, returning pending');
     return { status: 'pending' };
