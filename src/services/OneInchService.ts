@@ -1,4 +1,4 @@
-import { SDK, NetworkEnum as OneInchNetworkEnum } from "@1inch/cross-chain-sdk";
+import { SDK, NetworkEnum as OneInchNetworkEnum, PrivateKeyProviderConnector } from "@1inch/cross-chain-sdk";
 import { FusionSDK, NetworkEnum as FusionNetworkEnum } from "@1inch/fusion-sdk";
 import { ethers } from 'ethers';
 import { SwapQuote, OrderParams, NetworkEnum, IOneInchService, OneInchQuoteParams, OneInchOrderResult } from '../types';
@@ -13,11 +13,12 @@ export class OneInchService implements IOneInchService {
   protected apiKey: string;
 
   constructor(apiUrl: string, authKey: string, walletService: WalletService) {
-    // Use the actual 1inch API URL for the cross-chain SDK
-    // The SDK should handle its own HTTP requests
+    // Note: We'll initialize the SDK without blockchain provider for quotes
+    // and create a new instance with provider when needed for order submission
     this.crossChainSDK = new SDK({
       url: 'https://api.1inch.dev/fusion-plus',
       authKey: authKey
+      // blockchainProvider will be set dynamically when needed
     });
   
     // Initialize Fusion SDKs for same-chain swaps
@@ -449,7 +450,7 @@ export class OneInchService implements IOneInchService {
   }
 
   /**
- * Place cross-chain Fusion+ order using SDK - FIXED TypeScript errors
+ * Place cross-chain Fusion+ order using SDK with blockchain provider
  */
 private async placeCrossChainOrder(
   quoteParams: OneInchQuoteParams,
@@ -465,14 +466,14 @@ private async placeCrossChainOrder(
     
     console.log(`📝 Using wallet address: ${wallet.address}`);
 
-    // Step 2: Get a fresh quote using direct API call (avoiding SDK proxy issues)
-    console.log('🔍 Getting fresh quote for order placement via proxy...');
-    
-    const quote = await this.getCrossChainQuote(quoteParams);
-    console.log('✅ Quote received via proxy, preparing order...');
+    // Step 2: Create SDK instance with blockchain provider
+    console.log('🔧 Creating SDK instance with blockchain provider...');
+    const sdkWithProvider = this.createSDKWithProvider(privateKey);
 
-    // Step 3: Get the quote using SDK for order creation
-    const sdkQuote = await this.crossChainSDK.getQuote({
+    // Step 3: Get a fresh quote using the SDK with provider
+    console.log('🔍 Getting fresh quote for order placement...');
+    
+    const sdkQuote = await sdkWithProvider.getQuote({
       srcChainId: quoteParams.srcChainId,
       dstChainId: quoteParams.dstChainId,
       srcTokenAddress: quoteParams.srcTokenAddress,
@@ -511,23 +512,23 @@ private async placeCrossChainOrder(
 
     console.log('🎯 Hash lock created, creating order...');
 
-    // Step 6: Create the order - Fix preset type issue
+    // Step 6: Create the order
     const orderParams = {
       walletAddress: quoteParams.walletAddress,
       hashLock: hashLock,
-      preset: PresetEnum.fast, // Use PresetEnum instead of preset object
+      preset: PresetEnum.fast,
       source: 'sdk',
       secretHashes: secretHashes
     };
 
-    const { hash, quoteId, order } = await this.crossChainSDK.createOrder(sdkQuote, orderParams);
+    const { hash, quoteId, order } = await sdkWithProvider.createOrder(sdkQuote, orderParams);
     
     console.log('📋 Order created with hash:', hash);
 
-    // Step 7: Submit the order
+    // Step 7: Submit the order using the SDK with provider
     console.log('📤 Submitting order to network...');
     
-    const orderInfo = await this.crossChainSDK.submitOrder(
+    const orderInfo = await sdkWithProvider.submitOrder(
       quoteParams.srcChainId,
       order,
       quoteId,
@@ -536,20 +537,17 @@ private async placeCrossChainOrder(
     
     console.log('✅ Order submitted successfully!', { hash });
 
-    // Step 8: Start the secret sharing process (optional - could be done in background)
-    this.startSecretSharingProcess(hash, secrets).catch(error => {
+    // Step 8: Start the secret sharing process
+    this.startSecretSharingProcess(hash, secrets, sdkWithProvider).catch(error => {
       console.error('❌ Error in secret sharing process:', error);
     });
 
-    // Store secrets in a way that doesn't conflict with the type
-    // You might want to extend the OneInchOrderResult interface to include secrets
     const result: OneInchOrderResult = {
       orderId: hash,
       status: 'submitted'
     };
 
-    // Store secrets separately or extend the type definition
-    // For now, we'll add them as additional properties (if your type allows it)
+    // Store secrets as additional properties
     (result as any).secrets = secrets;
     (result as any).secretHashes = secretHashes.map(h => h.toString());
 
@@ -584,7 +582,7 @@ private async placeCrossChainOrder(
   /**
    * Background process to share secrets as escrows are deployed
    */
-  private async startSecretSharingProcess(orderHash: string, secrets: string[]): Promise<void> {
+  private async startSecretSharingProcess(orderHash: string, secrets: string[], sdk: SDK): Promise<void> {
     console.log('🔄 Starting secret sharing process for order:', orderHash);
     
     const maxAttempts = 60; // 5 minutes with 5-second intervals
@@ -593,7 +591,7 @@ private async placeCrossChainOrder(
     while (attempts < maxAttempts) {
       try {
         // Check for ready-to-accept secret fills
-        const secretsToShare = await this.crossChainSDK.getReadyToAcceptSecretFills(orderHash);
+        const secretsToShare = await sdk.getReadyToAcceptSecretFills(orderHash);
         
         if (secretsToShare.fills && secretsToShare.fills.length > 0) {
           console.log(`🔓 Found ${secretsToShare.fills.length} fills ready for secrets`);
@@ -601,7 +599,7 @@ private async placeCrossChainOrder(
           // Submit secrets for each ready fill
           for (const { idx } of secretsToShare.fills) {
             try {
-              await this.crossChainSDK.submitSecret(orderHash, secrets[idx]);
+              await sdk.submitSecret(orderHash, secrets[idx]);
               console.log(`✅ Shared secret for fill index ${idx}`);
             } catch (secretError) {
               console.error(`❌ Failed to share secret for fill ${idx}:`, secretError);
@@ -610,7 +608,7 @@ private async placeCrossChainOrder(
         }
         
         // Check order status
-        const { status } = await this.crossChainSDK.getOrderStatus(orderHash);
+        const { status } = await sdk.getOrderStatus(orderHash);
         
         console.log(`📊 Order ${orderHash} status: ${status}`);
         
@@ -765,5 +763,52 @@ private async placeCrossChainOrder(
       default:
         return NetworkEnum.ETHEREUM;
     }
+  }
+
+  /**
+   * Create SDK instance with blockchain provider for order operations
+   */
+  private createSDKWithProvider(privateKey: string): SDK {
+    // Create a simple Web3-like provider for ethers
+    const provider = new ethers.JsonRpcProvider(this.getRpcUrl(1)); // Default to Ethereum
+    
+    // Create Web3-like connector for the SDK
+    const web3Like = {
+      eth: {
+        call: async (transactionConfig: any) => {
+          return await provider.call(transactionConfig);
+        }
+      },
+      extend: () => {}
+    };
+    
+    // Create blockchain provider connector
+    const blockchainProvider = new PrivateKeyProviderConnector(privateKey, web3Like);
+    
+    // Return new SDK instance with blockchain provider
+    return new SDK({
+      url: 'https://api.1inch.dev/fusion-plus',
+      authKey: this.apiKey,
+      blockchainProvider: blockchainProvider
+    });
+  }
+
+  /**
+   * Get RPC URL for a given chain ID
+   */
+  private getRpcUrl(chainId: number): string {
+    const rpcUrls: Record<number, string> = {
+      1: 'https://ethereum-rpc.publicnode.com',
+      8453: 'https://base-rpc.publicnode.com',
+      42161: 'https://arbitrum-rpc.publicnode.com',
+      137: 'https://polygon-rpc.publicnode.com',
+      10: 'https://optimism-rpc.publicnode.com',
+      100: 'https://gnosis-rpc.publicnode.com',
+      250: 'https://fantom-rpc.publicnode.com',
+      324: 'https://zksync-rpc.publicnode.com',
+      59144: 'https://linea-rpc.publicnode.com'
+    };
+    
+    return rpcUrls[chainId] || rpcUrls[1]; // Default to Ethereum
   }
 } 
