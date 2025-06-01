@@ -450,14 +450,14 @@ export class OneInchService implements IOneInchService {
   }
 
   /**
-   * Place cross-chain Fusion+ order using SDK with blockchain provider - FULLY FIXED
+   * Place cross-chain Fusion+ order using SDK for creation and manual proxy submission
    */
   private async placeCrossChainOrder(
     quoteParams: OneInchQuoteParams,
     encryptedPrivateKey: string,
     slippage: number = 1
   ): Promise<OneInchOrderResult> {
-    console.log('🌉 Placing cross-chain Fusion+ order via SDK');
+    console.log('🌉 Placing cross-chain Fusion+ order via SDK + Manual Submission');
 
     try {
       // Step 1: Decrypt the private key
@@ -466,11 +466,11 @@ export class OneInchService implements IOneInchService {
       
       console.log(`📝 Using wallet address: ${wallet.address}`);
 
-      // Step 2: Create SDK instance with blockchain provider FIRST
+      // Step 2: Create SDK instance with blockchain provider
       console.log('🔧 Creating SDK instance with blockchain provider...');
       const sdkWithProvider = this.createSDKWithProvider(privateKey, quoteParams.srcChainId);
 
-      // Step 3: Get quote using the SDK with provider (not proxy)
+      // Step 3: Get quote using the SDK with provider
       console.log('🔍 Getting fresh quote for order placement via SDK...');
       
       const sdkQuote = await sdkWithProvider.getQuote({
@@ -512,7 +512,7 @@ export class OneInchService implements IOneInchService {
 
       console.log('🎯 Hash lock created, creating order...');
 
-      // Step 6: Create the order using the same SDK instance
+      // Step 6: Create the order using the SDK (this doesn't hit the network)
       const orderParams = {
         walletAddress: quoteParams.walletAddress,
         hashLock: hashLock,
@@ -524,18 +524,19 @@ export class OneInchService implements IOneInchService {
       const { hash, quoteId, order } = await sdkWithProvider.createOrder(sdkQuote, orderParams);
       
       console.log('📋 Order created with hash:', hash);
+      console.log('📋 Order object:', JSON.stringify(order, null, 2));
 
-      // Step 7: Submit the order using the SAME SDK instance
-      console.log('📤 Submitting order to network...');
+      // Step 7: Submit the order manually through proxy instead of SDK
+      console.log('📤 Submitting order to network via proxy...');
       
-      const orderInfo = await sdkWithProvider.submitOrder(
-        quoteParams.srcChainId,
+      const orderSubmissionResult = await this.submitOrderViaProxy(
         order,
         quoteId,
-        secretHashes
+        secretHashes,
+        quoteParams.srcChainId
       );
       
-      console.log('✅ Order submitted successfully!', { hash });
+      console.log('✅ Order submitted successfully via proxy!', { hash });
 
       // Step 8: Start the secret sharing process
       this.startSecretSharingProcess(hash, secrets, sdkWithProvider).catch(error => {
@@ -581,7 +582,77 @@ export class OneInchService implements IOneInchService {
       throw new Error(`Failed to place cross-chain order: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
-  
+
+  /**
+   * Submit order manually via proxy to bypass SDK's direct API calls
+   */
+  private async submitOrderViaProxy(
+    order: any,
+    quoteId: string,
+    secretHashes: any[],
+    srcChainId: number
+  ): Promise<any> {
+    try {
+      console.log('🔄 Submitting order via localhost proxy...');
+      
+      // Prepare the order submission payload
+      const submitPayload = {
+        order: order,
+        signature: order.signature || '0x', // Signature should be in the order object
+        quoteId: quoteId,
+        extension: order.extension || '',
+        srcChainId: srcChainId
+      };
+
+      console.log('📤 Order submission payload:', JSON.stringify(submitPayload, null, 2));
+
+      // Submit via proxy
+      const proxyUrl = 'http://localhost:3013';
+      const submitApiUrl = 'https://api.1inch.dev/fusion-plus/relayer/v1.0/submit';
+      const proxyParams = new URLSearchParams({
+        url: submitApiUrl
+      });
+      const fullProxyUrl = `${proxyUrl}?${proxyParams.toString()}`;
+
+      const headers = {
+        'accept': 'application/json',
+        'content-type': 'application/json',
+        'Authorization': `Bearer ${this.apiKey}`
+      };
+
+      const response = await axios.post(fullProxyUrl, submitPayload, { headers });
+      
+      console.log('✅ Order submitted successfully via proxy');
+      return response.data;
+
+    } catch (error) {
+      console.error('❌ Error submitting order via proxy:', error);
+      
+      if (error && typeof error === 'object' && 'response' in error) {
+        const axiosError = error as any;
+        console.error('📋 Order submission error details:', axiosError.response?.data);
+        
+        if (axiosError.response?.status === 400) {
+          const errorData = axiosError.response?.data;
+          
+          if (errorData?.description?.includes('Invalid order')) {
+            throw new Error('Invalid order format. The order structure may be incorrect.');
+          }
+          if (errorData?.description?.includes('signature')) {
+            throw new Error('Invalid order signature. Please check the signing process.');
+          }
+          if (errorData?.description?.includes('expired')) {
+            throw new Error('Order has expired. Please create a new order.');
+          }
+          
+          throw new Error(`Order submission failed: ${errorData?.description || 'Bad request'}`);
+        }
+      }
+      
+      throw new Error(`Failed to submit order via proxy: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
   /**
    * Background process to share secrets as escrows are deployed
    */
@@ -769,7 +840,7 @@ export class OneInchService implements IOneInchService {
   }
 
   /**
-   * Create SDK instance with blockchain provider - IMPROVED VERSION
+   * Create SDK instance with blockchain provider for order creation (submission handled manually via proxy)
    */
   private createSDKWithProvider(privateKey: string, chainId: number): SDK {
     // Use the source chain's RPC provider
