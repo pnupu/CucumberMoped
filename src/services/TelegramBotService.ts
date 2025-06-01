@@ -2820,13 +2820,62 @@ Ready to verify? Download World App! 🚀`;
         );
 
         // Call buyTokenByContract (it automatically uses native token)
-        const result = await this.blockchainService?.buyTokenByContract(
-          chainId,
-          contractAddress,
-          amount,
-          user.walletAddress,
-          user.encryptedPrivateKey
-        );
+        let result;
+        try {
+          result = await this.blockchainService?.buyTokenByContract(
+            chainId,
+            contractAddress,
+            amount,
+            user.walletAddress,
+            user.encryptedPrivateKey
+          );
+        } catch (buyError) {
+          console.error('Error from buyTokenByContract:', buyError);
+          
+          // Handle specific error types
+          if (buyError instanceof Error) {
+            if (buyError.message.includes('token not supported')) {
+              this.bot.sendMessage(chatId,
+                `❌ **Token Not Supported**\n\n` +
+                `The token at \`${contractAddress}\` on ${CHAIN_NAMES[chainId] || chainSymbol.toUpperCase()} is not supported by 1inch Fusion+ for cross-chain swaps.\n\n` +
+                `**Possible reasons:**\n` +
+                `• Token is not whitelisted on 1inch\n` +
+                `• Token has transfer restrictions\n` +
+                `• Token is not available on destination chain\n\n` +
+                `**Alternatives:**\n` +
+                `• Try a different token that's supported\n` +
+                `• Use /tokens to see supported tokens\n` +
+                `• Use DEX aggregators directly for same-chain swaps`,
+                { parse_mode: 'Markdown' }
+              );
+              return;
+            } else if (buyError.message.includes('insufficient')) {
+              this.bot.sendMessage(chatId,
+                `❌ **Insufficient Funds**\n\n` +
+                `You don't have enough USDC on Base to complete this purchase.\n\n` +
+                `**Required:** ${amount} USDC\n` +
+                `**Chain:** Base Network\n\n` +
+                `Use /balance to check your current balances.`
+              );
+              return;
+            } else {
+              this.bot.sendMessage(chatId,
+                `❌ **Purchase Failed**\n\n` +
+                `Error: ${buyError.message}\n\n` +
+                `**Details:**\n` +
+                `• Chain: ${CHAIN_NAMES[chainId] || chainSymbol.toUpperCase()}\n` +
+                `• Contract: \`${contractAddress}\`\n` +
+                `• Amount: ${amount} USDC\n\n` +
+                `Please verify the contract address and try again.`,
+                { parse_mode: 'Markdown' }
+              );
+              return;
+            }
+          } else {
+            this.bot.sendMessage(chatId, '❌ Failed to buy token. Please try again.');
+            return;
+          }
+        }
 
         if (result) {
           this.bot.sendMessage(chatId,
