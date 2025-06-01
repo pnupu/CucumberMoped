@@ -661,7 +661,7 @@ export class OneInchService implements IOneInchService {
   }
 
   /**
-   * Background process to share secrets as escrows are deployed
+   * Background process to share secrets as escrows are deployed - UPDATED TO USE PROXY
    */
   private async startSecretSharingProcess(orderHash: string, secrets: string[], sdk: SDK): Promise<void> {
     console.log('🔄 Starting secret sharing process for order:', orderHash);
@@ -671,16 +671,16 @@ export class OneInchService implements IOneInchService {
     
     while (attempts < maxAttempts) {
       try {
-        // Check for ready-to-accept secret fills
-        const secretsToShare = await sdk.getReadyToAcceptSecretFills(orderHash);
+        // Check for ready-to-accept secret fills via proxy instead of SDK
+        const secretsToShare = await this.getReadyToAcceptSecretFillsViaProxy(orderHash);
         
         if (secretsToShare.fills && secretsToShare.fills.length > 0) {
           console.log(`🔓 Found ${secretsToShare.fills.length} fills ready for secrets`);
           
-          // Submit secrets for each ready fill
+          // Submit secrets for each ready fill via proxy
           for (const { idx } of secretsToShare.fills) {
             try {
-              await sdk.submitSecret(orderHash, secrets[idx]);
+              await this.submitSecretViaProxy(orderHash, secrets[idx]);
               console.log(`✅ Shared secret for fill index ${idx}`);
             } catch (secretError) {
               console.error(`❌ Failed to share secret for fill ${idx}:`, secretError);
@@ -688,8 +688,8 @@ export class OneInchService implements IOneInchService {
           }
         }
         
-        // Check order status
-        const { status } = await sdk.getOrderStatus(orderHash);
+        // Check order status via proxy
+        const { status } = await this.getOrderStatusViaProxy(orderHash);
         
         console.log(`📊 Order ${orderHash} status: ${status}`);
         
@@ -718,6 +718,79 @@ export class OneInchService implements IOneInchService {
     
     if (attempts >= maxAttempts) {
       console.warn('⚠️ Secret sharing process timed out for order:', orderHash);
+    }
+  }
+
+  /**
+   * Get ready-to-accept secret fills via proxy
+   */
+  private async getReadyToAcceptSecretFillsViaProxy(orderHash: string): Promise<any> {
+    try {
+      const proxyUrl = 'http://localhost:3013';
+      const apiUrl = `https://api.1inch.dev/fusion-plus/orders/v1.0/order/ready-to-accept-secret-fills/${orderHash}`;
+      const url = `${proxyUrl}/?url=${encodeURIComponent(apiUrl)}`;
+
+      const headers = {
+        'accept': 'application/json',
+        'Authorization': `Bearer ${this.apiKey}`
+      };
+
+      const response = await axios.get(url, { headers });
+      return response.data;
+    } catch (error) {
+      console.error('❌ Error getting ready-to-accept secret fills via proxy:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Submit secret via proxy
+   */
+  private async submitSecretViaProxy(orderHash: string, secret: string): Promise<any> {
+    try {
+      const proxyUrl = 'http://localhost:3013';
+      const apiUrl = `https://api.1inch.dev/fusion-plus/orders/v1.0/order/submit-secret`;
+      const url = `${proxyUrl}/?url=${encodeURIComponent(apiUrl)}`;
+
+      const headers = {
+        'accept': 'application/json',
+        'content-type': 'application/json',
+        'Authorization': `Bearer ${this.apiKey}`
+      };
+
+      const payload = {
+        orderHash: orderHash,
+        secret: secret
+      };
+
+      const response = await axios.post(url, payload, { headers });
+      return response.data;
+    } catch (error) {
+      console.error('❌ Error submitting secret via proxy:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get order status via proxy
+   */
+  private async getOrderStatusViaProxy(orderHash: string): Promise<any> {
+    try {
+      const proxyUrl = 'http://localhost:3013';
+      const apiUrl = `https://api.1inch.dev/fusion-plus/orders/v1.0/order/status/${orderHash}`;
+      const url = `${proxyUrl}/?url=${encodeURIComponent(apiUrl)}`;
+
+      const headers = {
+        'accept': 'application/json',
+        'Authorization': `Bearer ${this.apiKey}`
+      };
+
+      const response = await axios.get(url, { headers });
+      return response.data;
+    } catch (error) {
+      console.error('❌ Error getting order status via proxy:', error);
+      // Return a default status if the request fails
+      return { status: 'unknown' };
     }
   }
 
