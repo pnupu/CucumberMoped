@@ -942,7 +942,7 @@ Ready to verify? 🚀`;
             `✅ **Limit Buy Order Created!**\n\n` +
             `📊 **Order Details:**\n` +
             `• Token: ${tokenSymbol.toUpperCase()}\n` +
-            `• Amount: ${amount} ${tokenSymbol.toUpperCase()}\n` +
+            `• Amount: ${amount} USDC\n` +
             `• Type: BUY\n` +
             `• EMA Price: $${result.emaPrice?.toFixed(6)}\n` +
             `• Limit Price: $${result.limitPrice?.toFixed(6)}\n` +
