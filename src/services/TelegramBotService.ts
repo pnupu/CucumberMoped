@@ -521,39 +521,108 @@ Ready to verify? 🚀`;
           return;
         }
 
-
-        const parts = input.split(' ');
+        let fromToken: any = null;
+        let toToken: any = null;
         let fromSymbol = 'USDC'; // Default to USDC
-        let toSymbol: string;
-        let amount: string;
-        let chainId = 8453; // Default to Base
+        let toSymbol: string = '';
+        let amount: string = '';
 
-        if (parts.length === 2) {
-          // Format: /buy ETH 100 (assumes USDC as from token, Base as chain)
-          [toSymbol, amount] = parts;
-        } else if (parts.length === 3) {
-          // Format: /buy 100 USDC ETH (explicit from/to tokens)
-          [amount, fromSymbol, toSymbol] = parts;
-        } else {
-          this.bot.sendMessage(chatId, 
-            'Invalid command format. Use:\n' +
-            '• `/buy ETH 100` - Buy ETH with 100 USDC (on Base)\n' +
-            '• `/buy 100 USDC ETH` - Buy ETH with 100 USDC\n\n' +
-            '💡 Base network is recommended for lower fees!'
+        try {
+          const parts = input.split(' ');
+          let chainId = 8453; // Default to Base
+
+          if (parts.length === 2) {
+            // Format: /buy ETH 100 (assumes USDC as from token, Base as chain)
+            [toSymbol, amount] = parts;
+          } else if (parts.length === 3) {
+            // Format: /buy 100 USDC ETH (explicit from/to tokens)
+            [amount, fromSymbol, toSymbol] = parts;
+          } else {
+            this.bot.sendMessage(chatId, 
+              'Invalid command format. Use:\n' +
+              '• `/buy ETH 100` - Buy ETH with 100 USDC (on Base)\n' +
+              '• `/buy 100 USDC ETH` - Buy ETH with 100 USDC\n\n' +
+              '💡 Base network is recommended for lower fees!'
+            );
+            return;
+          }
+
+          // Get token information, defaulting to Base network
+          fromToken = getTokenBySymbol(fromSymbol.toUpperCase(), chainId);
+          toToken = getTokenBySymbol(toSymbol.toUpperCase(), chainId);
+
+          // Check if tokens exist on other chains for cross-chain options
+          const allFromTokens = SUPPORTED_TOKENS.filter(token => 
+            token.symbol.toLowerCase() === fromSymbol.toLowerCase()
           );
-          return;
-        }
-
-        // Get token information, defaulting to Base network
-        const fromToken = getTokenBySymbol(fromSymbol.toUpperCase(), chainId);
-        const toToken = getTokenBySymbol(toSymbol.toUpperCase(), chainId);
-
-        if (!fromToken || !toToken) {
-          this.bot.sendMessage(chatId, 
-            `Unknown token on Base network. Use /tokens to see supported tokens.\n\n` +
-            `💡 Try popular tokens: USDC, ETH, cbBTC, DEGEN, BRETT`
+          const allToTokens = SUPPORTED_TOKENS.filter(token => 
+            token.symbol.toLowerCase() === toSymbol.toLowerCase()
           );
-          return;
+
+          if (allFromTokens.length === 0) {
+            this.bot.sendMessage(chatId, 
+              `❌ Token "${fromSymbol.toUpperCase()}" not found on any supported network.\n\n` +
+              `Use /tokens to see all supported tokens.`
+            );
+            return;
+          }
+
+          if (allToTokens.length === 0) {
+            this.bot.sendMessage(chatId, 
+              `❌ Token "${toSymbol.toUpperCase()}" not found on any supported network.\n\n` +
+              `Use /tokens to see all supported tokens.`
+            );
+            return;
+          }
+
+          // Find the best cross-chain combination
+          // Priority: Base USDC as source, then other combinations
+          let bestFromToken = allFromTokens.find(t => t.symbol === 'USDC' && t.chainId === 8453) || allFromTokens[0];
+          let bestToToken = allToTokens.find(t => t.chainId !== bestFromToken.chainId) || allToTokens[0];
+
+          // If still same chain, try different combinations
+          if (bestFromToken.chainId === bestToToken.chainId) {
+            for (const fromTok of allFromTokens) {
+              for (const toTok of allToTokens) {
+                if (fromTok.chainId !== toTok.chainId) {
+                  bestFromToken = fromTok;
+                  bestToToken = toTok;
+                  break;
+                }
+              }
+              if (bestFromToken.chainId !== bestToToken.chainId) break;
+            }
+          }
+
+          // Use the best cross-chain combination
+          fromToken = bestFromToken;
+          toToken = bestToToken;
+
+          this.bot.sendMessage(chatId, 
+            `🔄 Using cross-chain purchase:\n` +
+            `${fromToken.symbol} (${CHAIN_NAMES[fromToken.chainId]}) → ${toToken.symbol} (${CHAIN_NAMES[toToken.chainId]})\n\n` +
+            `Getting quote for fusion swap...`
+          );
+        } catch (error) {
+          console.error('Error in buy command:', error);
+          if (error instanceof Error && error.message.includes('token not supported')) {
+            this.bot.sendMessage(chatId, 
+              `❌ **Token Not Supported**\n\n` +
+              `This token pair is not supported by 1inch Fusion+ for swaps.\n\n` +
+              `**Alternatives:**\n` +
+              `• Try /quote command for more options\n` +
+              `• Use /tokens to see supported tokens\n` +
+              `• Consider different token pairs`
+            );
+          } else {
+            this.bot.sendMessage(chatId, 
+              'Error getting quote. Please check:\n' +
+              '• Token names are correct\n' +
+              '• You have sufficient balance\n' +
+              '• Amount is valid\n\n' +
+              '💡 Use /quote for more cross-chain options!'
+            );
+          }
         }
 
         // Get quote
@@ -572,7 +641,12 @@ Ready to verify? 🚀`;
         // Store quote data and get short ID for callback (same as /quote command)
         const quoteId = this.storeQuote(quoteParams);
 
-        // Send confirmation with Base network highlighted
+        // Send confirmation with network information
+        const swapType = fromToken.chainId === toToken.chainId ? 'Same-Chain' : 'Cross-Chain';
+        const networkInfo = fromToken.chainId === toToken.chainId 
+          ? `Network: ${CHAIN_NAMES[fromToken.chainId]}`
+          : `From: ${CHAIN_NAMES[fromToken.chainId]} → To: ${CHAIN_NAMES[toToken.chainId]}`;
+
         const keyboard = {
           inline_keyboard: [
             [
@@ -583,25 +657,37 @@ Ready to verify? 🚀`;
         };
 
         this.bot.sendMessage(chatId,
-          `📊 Purchase Quote (Base Network):\n\n` +
+          `📊 ${swapType} Purchase Quote:\n\n` +
           `Selling: ${amount} ${fromSymbol.toUpperCase()}\n` +
           `Receiving: ~${outputAmount} ${toSymbol.toUpperCase()}\n` +
-          `Network: Base (lower fees ✨)\n` +
+          `${networkInfo}\n` +
           `Price Impact: ~${quote.priceImpact}%\n` +
           `Estimated Gas: ${quote.estimatedGas}\n\n` +
+          `${swapType === 'Cross-Chain' ? '🌉 Using 1inch Fusion+ for cross-chain swap\n\n' : ''}` +
           `Confirm purchase:`,
           { reply_markup: keyboard }
         );
 
       } catch (error) {
         console.error('Error in buy command:', error);
-        this.bot.sendMessage(chatId, 
-          'Error getting quote. Please check:\n' +
-          '• Token names are correct\n' +
-          '• You have sufficient balance\n' +
-          '• Amount is valid\n\n' +
-          '💡 Remember: USDC on Base is recommended!'
-        );
+        if (error instanceof Error && error.message.includes('token not supported')) {
+          this.bot.sendMessage(chatId, 
+            `❌ **Token Not Supported**\n\n` +
+            `This token pair is not supported by 1inch Fusion+ for swaps.\n\n` +
+            `**Alternatives:**\n` +
+            `• Try /quote command for more options\n` +
+            `• Use /tokens to see supported tokens\n` +
+            `• Consider different token pairs`
+          );
+        } else {
+          this.bot.sendMessage(chatId, 
+            'Error getting quote. Please check:\n' +
+            '• Token names are correct\n' +
+            '• You have sufficient balance\n' +
+            '• Amount is valid\n\n' +
+            '💡 Use /quote for more cross-chain options!'
+          );
+        }
       }
     });
 

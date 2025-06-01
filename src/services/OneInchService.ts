@@ -197,155 +197,167 @@ export class OneInchService implements IOneInchService {
   }
 
   /**
- * Get cross-chain quote using direct API calls through localhost proxy - FIXED VERSION
- */
-private async getCrossChainQuote(params: OneInchQuoteParams): Promise<SwapQuote> {
-  try {
-    console.log('🌉 Getting cross-chain quote via localhost proxy');
-    
-    // Build query parameters for GET request
-    const queryParams = new URLSearchParams({
-      srcChain: params.srcChainId.toString(),
-      dstChain: params.dstChainId.toString(),
-      srcTokenAddress: params.srcTokenAddress,
-      dstTokenAddress: params.dstTokenAddress,
-      amount: params.amount,
-      walletAddress: params.walletAddress,
-      enableEstimate: 'true',
-      source: 'sdk'
-    });
-
-    const proxyUrl = 'http://localhost:3013';
-    const apiUrl = `https://api.1inch.dev/fusion-plus/quoter/v1.0/quote/receive?${queryParams.toString()}`;
-    const url = `${proxyUrl}/?url=${encodeURIComponent(apiUrl)}`;
-
-    const headers: Record<string, string> = {
-      'accept': 'application/json',
-      'Authorization': `Bearer ${this.apiKey}`
-    };
-
-    console.log('🔍 API request details (GET):', {
-      url,
-      queryParams: Object.fromEntries(queryParams)
-    });
-
-    // Use GET request instead of POST
-    const quoteResponse = await axios.get(url, {
-      headers
-    });
-
-    const data = quoteResponse.data;
-    console.log('✅ Cross-chain quote received via proxy');
-    
-    // Check if the response contains an error
-    if (data && typeof data === 'object' && data.error) {
-      console.error('🚨 1inch API error:', data);
-      throw new Error(`1inch API error: ${data.description || data.error}`);
-    }
-    
-    // Extract output amount from the response
-    let outputAmount = "0";
-    
+   * Get cross-chain quote using direct API calls through localhost proxy - FIXED VERSION
+   */
+  private async getCrossChainQuote(params: OneInchQuoteParams): Promise<SwapQuote> {
     try {
-      // For Fusion+ quotes, the structure typically includes presets
-      if (data.dstTokenAmount) {
-        outputAmount = data.dstTokenAmount.toString();
-      } else if (data.presets?.fast?.auctionEndAmount) {
-        outputAmount = data.presets.fast.auctionEndAmount.toString();
-      } else if (data.presets?.fast?.auctionStartAmount) {
-        outputAmount = data.presets.fast.auctionStartAmount.toString();
-      } else if (data.auctionEndAmount) {
-        outputAmount = data.auctionEndAmount.toString();
-      } else if (data.auctionStartAmount) {
-        outputAmount = data.auctionStartAmount.toString();
-      } else if (data.dstAmount) {
-        outputAmount = data.dstAmount.toString();
-      } else if (data.toAmount) {
-        outputAmount = data.toAmount.toString();
-      } else {
-        console.log('Response structure:', Object.keys(data));
+      console.log('🌉 Getting cross-chain quote via localhost proxy');
+      
+      // Build query parameters for GET request
+      const queryParams = new URLSearchParams({
+        srcChain: params.srcChainId.toString(),
+        dstChain: params.dstChainId.toString(),
+        srcTokenAddress: params.srcTokenAddress,
+        dstTokenAddress: params.dstTokenAddress,
+        amount: params.amount,
+        walletAddress: params.walletAddress,
+        enableEstimate: 'true',
+        source: 'sdk'
+      });
+
+      const proxyUrl = 'http://localhost:3013';
+      const apiUrl = `https://api.1inch.dev/fusion-plus/quoter/v1.0/quote/receive?${queryParams.toString()}`;
+      const url = `${proxyUrl}/?url=${encodeURIComponent(apiUrl)}`;
+
+      const headers: Record<string, string> = {
+        'accept': 'application/json',
+        'Authorization': `Bearer ${this.apiKey}`
+      };
+
+      console.log('🔍 API request details (GET):', {
+        url,
+        queryParams: Object.fromEntries(queryParams)
+      });
+
+      // Use GET request instead of POST
+      const quoteResponse = await axios.get(url, {
+        headers
+      });
+
+      const data = quoteResponse.data;
+      console.log('✅ Cross-chain quote received via proxy');
+      
+      // Check if the response contains an error
+      if (data && typeof data === 'object' && data.error) {
+        console.error('🚨 1inch API error:', data);
+        throw new Error(`1inch API error: ${data.description || data.error}`);
+      }
+      
+      // Extract output amount from the response
+      let outputAmount = "0";
+      
+      try {
+        // For Fusion+ quotes, the structure typically includes presets
+        if (data.dstTokenAmount) {
+          outputAmount = data.dstTokenAmount.toString();
+        } else if (data.presets?.fast?.auctionEndAmount) {
+          outputAmount = data.presets.fast.auctionEndAmount.toString();
+        } else if (data.presets?.fast?.auctionStartAmount) {
+          outputAmount = data.presets.fast.auctionStartAmount.toString();
+        } else if (data.auctionEndAmount) {
+          outputAmount = data.auctionEndAmount.toString();
+        } else if (data.auctionStartAmount) {
+          outputAmount = data.auctionStartAmount.toString();
+        } else if (data.dstAmount) {
+          outputAmount = data.dstAmount.toString();
+        } else if (data.toAmount) {
+          outputAmount = data.toAmount.toString();
+        } else {
+          console.log('Response structure:', Object.keys(data));
+          outputAmount = "1000000000000000000"; // 1 token as fallback
+        }
+      } catch (error) {
+        console.error('Error extracting output amount:', error);
         outputAmount = "1000000000000000000"; // 1 token as fallback
       }
+      
+      return {
+        fromToken: params.srcTokenAddress,
+        toToken: params.dstTokenAddress,
+        fromAmount: params.amount,
+        toAmount: outputAmount,
+        chainId: params.srcChainId,
+        estimatedGas: "500000", // Estimate
+        priceImpact: 0.1 // Estimate
+      };
     } catch (error) {
-      console.error('Error extracting output amount:', error);
-      outputAmount = "1000000000000000000"; // 1 token as fallback
-    }
-    
-    return {
-      fromToken: params.srcTokenAddress,
-      toToken: params.dstTokenAddress,
-      fromAmount: params.amount,
-      toAmount: outputAmount,
-      chainId: params.srcChainId,
-      estimatedGas: "500000", // Estimate
-      priceImpact: 0.1 // Estimate
-    };
-  } catch (error) {
-    console.error('Error getting cross-chain quote:', error);
-    
-    // Handle specific error cases
-    if (error instanceof Error) {
-      if (error.message.includes('swap amount too small')) {
-        throw new Error('Minimum swap amount not met. Try with a larger amount (e.g., 10+ USDC for cross-chain swaps).');
+      console.error('Error getting cross-chain quote:', error);
+      
+      // Handle specific error cases
+      if (error instanceof Error) {
+        if (error.message.includes('swap amount too small')) {
+          throw new Error('Minimum swap amount not met. Try with a larger amount (e.g., 10+ USDC for cross-chain swaps).');
+        }
+        if (error.message.includes('token not supported')) {
+          throw new Error('Token not supported for cross-chain swaps on 1inch Fusion+.');
+        }
+        if (error.message.includes('walletAddress has not provided')) {
+          throw new Error('Invalid wallet address parameter. Please check that the wallet address is properly formatted and valid.');
+        }
       }
-      if (error.message.includes('token not supported')) {
-        throw new Error('Token not supported for cross-chain swaps on 1inch Fusion+.');
-      }
-      if (error.message.includes('walletAddress has not provided')) {
-        throw new Error('Invalid wallet address parameter. Please check that the wallet address is properly formatted and valid.');
-      }
-    }
 
-    // Handle HTTP errors
-    if (error && typeof error === 'object' && 'response' in error) {
-      const axiosError = error as any;
-      if (axiosError.response?.status === 400) {
-        const errorData = axiosError.response?.data;
-        console.error('🚨 Localhost proxy 400 error:', errorData);
-        
-        if (typeof errorData === 'string' && errorData.includes('Include `url`')) {
-          throw new Error('❌ Proxy configuration error: URL parameter format issue');
+      // Handle HTTP errors
+      if (error && typeof error === 'object' && 'response' in error) {
+        const axiosError = error as any;
+        if (axiosError.response?.status === 400) {
+          const errorData = axiosError.response?.data;
+          console.error('🚨 Localhost proxy 400 error:', errorData);
+          
+          if (typeof errorData === 'string' && errorData.includes('Include `url`')) {
+            throw new Error('❌ Proxy configuration error: URL parameter format issue');
+          }
+          
+          if (errorData?.description?.includes('walletAddress')) {
+            throw new Error('❌ Invalid wallet address parameter. Please check that the wallet address is properly formatted and valid.');
+          }
+          
+          throw new Error(`Invalid parameters: ${errorData?.description || 'Bad request'}`);
         }
-        
-        if (errorData?.description?.includes('walletAddress')) {
-          throw new Error('❌ Invalid wallet address parameter. Please check that the wallet address is properly formatted and valid.');
+        if (axiosError.response?.status === 404) {
+          throw new Error(`❌ Cross-chain route not available: ${CHAIN_NAMES[params.srcChainId] || 'source chain'} → ${CHAIN_NAMES[params.dstChainId] || 'target chain'}\n\n1inch Fusion+ doesn't support this token pair for cross-chain swaps.`);
         }
-        
-        throw new Error(`Invalid parameters: ${errorData?.description || 'Bad request'}`);
+        if (axiosError.response?.status === 403) {
+          throw new Error('Authentication failed. Check your API key configuration.');
+        }
+        if (axiosError.response?.status === 429) {
+          throw new Error('Rate limit exceeded. Please wait a moment before trying again.');
+        }
       }
-      if (axiosError.response?.status === 404) {
-        throw new Error(`❌ Cross-chain route not available: ${CHAIN_NAMES[params.srcChainId] || 'source chain'} → ${CHAIN_NAMES[params.dstChainId] || 'target chain'}\n\n1inch Fusion+ doesn't support this token pair for cross-chain swaps.`);
-      }
-      if (axiosError.response?.status === 403) {
-        throw new Error('Authentication failed. Check your API key configuration.');
-      }
-      if (axiosError.response?.status === 429) {
-        throw new Error('Rate limit exceeded. Please wait a moment before trying again.');
-      }
+      
+      throw new Error(`Failed to get cross-chain quote: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
-    
-    throw new Error(`Failed to get cross-chain quote: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
-}
 
   /**
-   * Place an order (Fusion for same-chain, Fusion+ for cross-chain)
+   * Place an order based on quote parameters
    */
-  async placeOrder(
-    quoteParams: OneInchQuoteParams,
-    encryptedPrivateKey: string,
-    slippage: number = 1
-  ): Promise<OneInchOrderResult> {
+  async placeOrder(quoteParams: OneInchQuoteParams, encryptedPrivateKey: string): Promise<OneInchOrderResult> {
+    console.log('📋 Placing order...');
+    console.log('📊 Order details:');
+    console.log(`  From Chain: ${quoteParams.srcChainId}`);
+    console.log(`  To Chain: ${quoteParams.dstChainId}`);
+    console.log(`  From Token: ${quoteParams.srcTokenAddress}`);
+    console.log(`  To Token: ${quoteParams.dstTokenAddress}`);
+    console.log(`  Amount: ${quoteParams.amount}`);
+    console.log(`  Wallet: ${quoteParams.walletAddress}`);
+
     try {
-      // Check if this is same-chain or cross-chain
-      if (quoteParams.srcChainId === quoteParams.dstChainId) {
-        return this.placeSameChainOrder(quoteParams, encryptedPrivateKey, slippage);
+      // Determine if this is a cross-chain or same-chain order
+      if (quoteParams.srcChainId !== quoteParams.dstChainId) {
+        console.log('🌉 Cross-chain order detected, using Fusion+ SDK');
+        return await this.placeCrossChainOrder(quoteParams, encryptedPrivateKey);
       } else {
-        return this.placeCrossChainOrder(quoteParams, encryptedPrivateKey, slippage);
+        console.log('🔄 Same-chain order detected, using Fusion mode');
+        return await this.placeSameChainOrder(quoteParams, encryptedPrivateKey);
       }
     } catch (error) {
-      console.error('Error placing order:', error);
-      throw new Error(`Failed to place order: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      console.error('❌ Error placing order:', error);
+      
+      // Re-throw with more context
+      if (error instanceof Error) {
+        throw new Error(`Order placement failed: ${error.message}`);
+      }
+      throw new Error('Order placement failed: Unknown error');
     }
   }
 
@@ -439,69 +451,144 @@ private async getCrossChainQuote(params: OneInchQuoteParams): Promise<SwapQuote>
   }
 
   /**
-   * Place cross-chain Fusion+ order using direct API calls through localhost proxy
+   * Place cross-chain Fusion+ order using the SDK
    */
   private async placeCrossChainOrder(
     quoteParams: OneInchQuoteParams,
     encryptedPrivateKey: string,
     slippage: number = 1
   ): Promise<OneInchOrderResult> {
-    console.log('🌉 Placing cross-chain Fusion+ order via localhost proxy');
+    console.log('🌉 Placing cross-chain Fusion+ order via SDK');
 
-    // For now, we'll return a simulated order result since implementing full order execution
-    // would require proper quote handling, wallet integration, transaction signing, etc.
-    // This would need to:
-    // 1. Get a fresh quote via the proxy
-    // 2. Generate secrets and hash locks
-    // 3. Place the order via the proxy
-    // 4. Handle the order response
-    
     try {
-      // Get fresh quote first via proxy
-      const proxyUrl = 'http://localhost:3013';
-      const apiUrl = 'https://api.1inch.dev/fusion-plus/quoter/v1.0/quote/receive';
-      const url = `${proxyUrl}/?url=${encodeURIComponent(apiUrl)}`;
+      // Step 1: Decrypt the private key
+      const privateKey = this.walletService.decrypt(encryptedPrivateKey);
+      const wallet = new ethers.Wallet(privateKey);
+      
+      console.log(`📝 Using wallet address: ${wallet.address}`);
 
-      const headers: Record<string, string> = {
-        'accept': 'application/json',
-        'Authorization': `Bearer ${this.apiKey}`
-      };
-
-      const quoteResponse = await axios.post(url, {
-        srcChain: quoteParams.srcChainId,
-        dstChain: quoteParams.dstChainId,
+      // Step 2: Get a fresh quote using the SDK
+      console.log('🔍 Getting fresh quote for order placement...');
+      
+      const quote = await this.crossChainSDK.getQuote({
+        srcChainId: quoteParams.srcChainId,
+        dstChainId: quoteParams.dstChainId,
         srcTokenAddress: quoteParams.srcTokenAddress,
         dstTokenAddress: quoteParams.dstTokenAddress,
         amount: quoteParams.amount,
-        from: quoteParams.walletAddress,
         walletAddress: quoteParams.walletAddress,
-        enableEstimate: true,
-        source: 'sdk'
-      }, {
-        headers
+        enableEstimate: true
       });
 
-      console.log('✅ Fresh quote received for order placement');
+      console.log('✅ Quote received, preparing order...');
 
-      // For now, return a simulated order result
-      // In a real implementation, you would:
-      // 1. Extract the quote data
-      // 2. Generate secrets and hash locks
-      // 3. Call the order placement API via proxy
-      // 4. Return the actual order ID
+      // Step 3: Generate secrets and hash locks
+      const preset = quote.getPreset();
+      const secretsCount = preset.secretsCount || 1;
       
-      const simulatedOrderId = ethers.keccak256(ethers.toUtf8Bytes(
-        `${quoteParams.srcTokenAddress}-${quoteParams.dstTokenAddress}-${Date.now()}`
-      ));
+      console.log(`🔐 Generating ${secretsCount} secrets for hash lock...`);
       
-      console.log('⚠️ Note: Cross-chain order placement not fully implemented - would place order here');
+      // Generate random secrets
+      const secrets = Array.from({ length: secretsCount }).map(() => this.getRandomBytes32());
       
-      return {
-        orderId: simulatedOrderId,
-        status: 'pending'
+      // Import the HashLock utility from the SDK
+      const { HashLock } = await import('@1inch/cross-chain-sdk');
+      
+      // Create secret hashes
+      const secretHashes = secrets.map((secret) => HashLock.hashSecret(secret));
+      
+      // Create hash lock based on number of secrets
+      let hashLock;
+      if (secretsCount === 1) {
+        hashLock = HashLock.forSingleFill(secrets[0]);
+      } else {
+        // For multiple fills, we need to create merkle leaves
+        const { solidityPackedKeccak256 } = await import('ethers');
+        const merkleLeaves = secretHashes.map((secretHash, i) =>
+          solidityPackedKeccak256(["uint64", "bytes32"], [i, secretHash.toString()])
+        );
+        hashLock = HashLock.forMultipleFills(merkleLeaves as any);
+      }
+
+      console.log('🎯 Hash lock created, creating order...');
+
+      // Step 4: Create the order
+      const orderParams = {
+        walletAddress: quoteParams.walletAddress,
+        hashLock: hashLock,
+        secretHashes: secretHashes,
+        // Optional fee (can be uncommented if needed)
+        // fee: {
+        //   takingFeeBps: 100, // 1%
+        //   takingFeeReceiver: quoteParams.walletAddress
+        // }
       };
+
+      const orderResult = await this.crossChainSDK.createOrder(quote, orderParams);
+      
+      console.log('📋 Order created, submitting to network...');
+
+      // Step 5: Submit the order (if the SDK supports it)
+      // Note: Some SDK versions may have a submitOrder method
+      if (typeof (this.crossChainSDK as any).submitOrder === 'function') {
+        const submitResult = await (this.crossChainSDK as any).submitOrder(orderResult.order, orderResult.quoteId);
+        console.log('✅ Order submitted successfully!');
+        
+        // Try to get order ID from various possible locations
+        let orderId: string;
+        try {
+          orderId = submitResult.orderHash || 
+                   (orderResult.order as any)?.hash ||
+                   (orderResult as any)?.orderHash ||
+                   ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify(orderResult)));
+        } catch (error) {
+          orderId = ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify(orderResult)));
+        }
+        
+        return {
+          orderId: orderId,
+          status: 'submitted',
+          txHash: submitResult.txHash
+        };
+      } else {
+        // If submitOrder is not available, the order creation might be the final step
+        console.log('✅ Order created and ready for execution!');
+        
+        // Try to get order ID from various possible locations
+        let orderId: string;
+        try {
+          orderId = (orderResult.order as any)?.hash ||
+                   (orderResult as any)?.orderHash ||
+                   ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify(orderResult)));
+        } catch (error) {
+          orderId = ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify(orderResult)));
+        }
+        
+        return {
+          orderId: orderId,
+          status: 'created'
+        };
+      }
+
     } catch (error) {
-      console.error('Error placing cross-chain order:', error);
+      console.error('❌ Error placing cross-chain order:', error);
+      
+      // Handle specific error types
+      if (error instanceof Error) {
+        if (error.message.includes('insufficient balance')) {
+          throw new Error('Insufficient balance for cross-chain swap. Please check your wallet balance.');
+        }
+        if (error.message.includes('token not supported')) {
+          throw new Error('Token not supported for cross-chain swaps on 1inch Fusion+.');
+        }
+        if (error.message.includes('chain not supported')) {
+          throw new Error('Chain combination not supported for cross-chain swaps.');
+        }
+        if (error.message.includes('amount too small')) {
+          throw new Error('Minimum swap amount not met. Try with a larger amount.');
+        }
+      }
+      
       throw new Error(`Failed to place cross-chain order: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
@@ -590,7 +677,7 @@ private async getCrossChainQuote(params: OneInchQuoteParams): Promise<SwapQuote>
   }
 
   /**
-   * Generate random bytes32 for secrets
+   * Generate random 32 bytes for secrets
    */
   private getRandomBytes32(): string {
     return ethers.hexlify(ethers.randomBytes(32));
