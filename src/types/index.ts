@@ -108,6 +108,8 @@ export interface OneInchOrderResult {
   orderId: string;
   status: string;
   txHash?: string;
+  secrets?: string[];
+  secretHashes?: string[];
 }
 
 export interface IOneInchService {
