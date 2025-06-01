@@ -2879,13 +2879,10 @@ Ready to verify? Download World App! 🚀`;
 
         if (result) {
           this.bot.sendMessage(chatId,
-            `✅ **Token Purchase Successful!**\n\n` +
             `📊 **Transaction Details:**\n` +
             `• Chain: ${CHAIN_NAMES[chainId] || chainSymbol.toUpperCase()}\n` +
             `• Contract: \`${contractAddress}\`\n` +
             `• Amount: ${amount} USDC (from Base)\n` +
-            `• Tx Hash: \`${result.txHash}\`\n\n` +
-            `🔗 [View on Blockscout](${this.blockchainService?.getExplorerUrl(chainId, result.txHash)})\n\n` +
             `🎉 Token has been added to supported tokens list!`,
             { parse_mode: 'Markdown' }
           );
