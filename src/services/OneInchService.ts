@@ -605,82 +605,101 @@ private async placeCrossChainOrder(
   }
 }
   
-  /**
-   * Submit order manually via proxy to bypass SDK's direct API calls
-   */
-  private async submitOrderViaProxy(
-    order: any,
-    quoteId: string,
-    secretHashes: any[],
-    srcChainId: number
-  ): Promise<any> {
-    try {
-      console.log('🔄 Submitting signed order via localhost proxy...');
-      
-      // Convert BigInt values to strings for API submission
-      const serializableOrder = JSON.parse(JSON.stringify(order, (key, value) => 
-        typeof value === 'bigint' ? value.toString() : value));
-      
-      // Prepare the order submission payload in the format expected by 1inch API
-      const orderForSubmission = this.formatOrderForAPI(serializableOrder);
-      
-      const submitPayload = {
-        order: orderForSubmission,
-        signature: serializableOrder.signature,
-        quoteId: quoteId,
-        extension: this.extractExtensionFromOrder(serializableOrder),
-        srcChainId: srcChainId
-      };
+private async submitOrderViaProxy(
+  order: any,
+  quoteId: string,
+  secretHashes: any[],
+  srcChainId: number
+): Promise<any> {
+  try {
+    console.log('🔄 Submitting signed order via localhost proxy...');
+    
+    // The order object from SDK already has the correct structure
+    // We need to pass it as-is, not try to reformat it
+    const orderData = order.inner?.inner || order;
+    
+    // Extract the extension data properly - this is critical for cross-chain orders
+    const extension = this.extractCrossChainExtension(order);
+    
+    // Create the submission payload in the exact format the API expects
+    const submitPayload = {
+      order: orderData,
+      quoteId: quoteId,
+      secretHashes: secretHashes.map(h => h.toString()),
+      signature: order.signature,
+      extension: extension // This must include destination chain info
+    };
 
-      console.log('📤 Order submission payload:', JSON.stringify(submitPayload, (key, value) => 
-        typeof value === 'bigint' ? value.toString() : value, 2));
+    console.log('📤 Order submission payload:', JSON.stringify(submitPayload, (key, value) => 
+      typeof value === 'bigint' ? value.toString() : value, 2));
 
-      // Submit via proxy
-      const proxyUrl = 'http://localhost:3013';
-      const submitApiUrl = 'https://api.1inch.dev/fusion-plus/relayer/v1.0/submit';
-      const proxyParams = new URLSearchParams({
-        url: submitApiUrl
-      });
-      const fullProxyUrl = `${proxyUrl}?${proxyParams.toString()}`;
+    // Submit via proxy
+    const proxyUrl = 'http://localhost:3013';
+    const submitApiUrl = 'https://api.1inch.dev/fusion-plus/relayer/v1.0/submit';
+    const url = `${proxyUrl}/?url=${encodeURIComponent(submitApiUrl)}`;
 
-      const headers = {
-        'accept': 'application/json',
-        'content-type': 'application/json',
-        'Authorization': `Bearer ${this.apiKey}`
-      };
+    const headers = {
+      'accept': 'application/json',
+      'content-type': 'application/json',
+      'Authorization': `Bearer ${this.apiKey}`
+    };
 
-      const response = await axios.post(fullProxyUrl, submitPayload, { headers });
-      
-      console.log('✅ Order submitted successfully via proxy');
-      return response.data;
+    const response = await axios.post(url, submitPayload, { headers });
+    
+    console.log('✅ Order submitted successfully via proxy:', response.data);
+    return response.data;
 
-    } catch (error) {
-      console.error('❌ Error submitting order via proxy:', error);
-      
-      if (error && typeof error === 'object' && 'response' in error) {
-        const axiosError = error as any;
-        console.error('📋 Order submission error details:', axiosError.response?.data);
-        
-        if (axiosError.response?.status === 400) {
-          const errorData = axiosError.response?.data;
-          
-          if (errorData?.description?.includes('Invalid order')) {
-            throw new Error('Invalid order format. The order structure may be incorrect.');
-          }
-          if (errorData?.description?.includes('signature')) {
-            throw new Error('Invalid order signature. Please check the signing process.');
-          }
-          if (errorData?.description?.includes('expired')) {
-            throw new Error('Order has expired. Please create a new order.');
-          }
-          
-          throw new Error(`Order submission failed: ${errorData?.description || 'Bad request'}`);
-        }
-      }
-      
-      throw new Error(`Failed to submit order via proxy: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  } catch (error) {
+    console.error('❌ Error submitting order via proxy:', error);
+    
+    if (error && typeof error === 'object' && 'response' in error) {
+      const axiosError = error as any;
+      console.error('📋 Full error response:', axiosError.response?.data);
+      console.error('📋 Status:', axiosError.response?.status);
+      console.error('📋 Headers:', axiosError.response?.headers);
     }
+    
+    throw error;
   }
+}
+
+/**
+ * Extract cross-chain extension data from order
+ */
+private extractCrossChainExtension(order: any): string {
+  try {
+    // For cross-chain orders, the extension contains destination chain info
+    // Try multiple possible locations
+    const extensionData = order.extension || 
+                         order.inner?.extension || 
+                         order.inner?.inner?.extension ||
+                         order.inner?.fusionExtension ||
+                         order.fusionExtension;
+    
+    if (!extensionData || extensionData === '0x') {
+      console.warn('⚠️ No extension data found in order - this will fail for cross-chain');
+      return '0x';
+    }
+    
+    // If it's already a hex string, return it
+    if (typeof extensionData === 'string' && extensionData.startsWith('0x')) {
+      return extensionData;
+    }
+    
+    // If it's an object, it needs to be encoded
+    if (typeof extensionData === 'object') {
+      // This would need proper ABI encoding based on the extension structure
+      console.log('📋 Extension data object:', extensionData);
+      // For now, we'll need to implement proper encoding
+      return '0x'; // This will cause the order to fail
+    }
+    
+    return '0x';
+  } catch (error) {
+    console.error('❌ Error extracting extension:', error);
+    return '0x';
+  }
+}
 
   /**
    * Sign the order using EIP-712 typed data signing - FIXED VERSION
