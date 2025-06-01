@@ -1336,12 +1336,85 @@ Ready to verify? 🚀`;
           return;
         }
 
-        // Check World ID verification before allowing merit eligibility check
-        const isVerificationPassed = await checkWorldIdVerification(userId, chatId);
-        if (!isVerificationPassed) {
-          return; // Verification message already sent
+        // Custom verification check for merit eligibility (stricter than trading)
+        let isVerified = false;
+        if (!this.worldIdService) {
+          // World ID service not available - show verification required message
+          const keyboard = {
+            inline_keyboard: [
+              [{ text: '🌍 Get Verified', callback_data: 'start_verification' }]
+            ]
+          };
+
+          this.bot.sendMessage(chatId, 
+            '🚫 **World ID Verification Required**\n\n' +
+            'Merit eligibility checking requires World ID verification to ensure fair distribution.\n\n' +
+            '**Why verification is required:**\n' +
+            '• Prevents bot abuse in merit programs\n' +
+            '• Ensures one merit claim per real human\n' +
+            '• Protects legitimate traders\n\n' +
+            '**Note:** World ID service is currently unavailable. Please try again later or verify when the service is restored.\n\n' +
+            'Click the button below when ready to verify! 👇',
+            { 
+              parse_mode: 'Markdown',
+              reply_markup: keyboard 
+            }
+          );
+          return;
         }
 
+        try {
+          isVerified = await this.worldIdService?.isUserVerified(userId);
+        } catch (error) {
+          console.error('Error checking World ID verification for merit eligibility:', error);
+          // On error, treat as not verified for merit eligibility
+          const keyboard = {
+            inline_keyboard: [
+              [{ text: '🌍 Get Verified', callback_data: 'start_verification' }]
+            ]
+          };
+
+          this.bot.sendMessage(chatId, 
+            '🚫 **World ID Verification Required**\n\n' +
+            'Merit eligibility checking requires World ID verification to ensure fair distribution.\n\n' +
+            '**Why verification is required:**\n' +
+            '• Prevents bot abuse in merit programs\n' +
+            '• Ensures one merit claim per real human\n' +
+            '• Protects legitimate traders\n\n' +
+            '**Status:** Unable to verify your World ID status. Please verify your identity first.\n\n' +
+            'Click the button below to get verified! 👇',
+            { 
+              parse_mode: 'Markdown',
+              reply_markup: keyboard 
+            }
+          );
+          return;
+        }
+
+        if (!isVerified) {
+          const keyboard = {
+            inline_keyboard: [
+              [{ text: '🌍 Get Verified', callback_data: 'start_verification' }]
+            ]
+          };
+
+          this.bot.sendMessage(chatId, 
+            '🚫 **World ID Verification Required**\n\n' +
+            'Merit eligibility checking requires World ID verification to ensure fair distribution.\n\n' +
+            '**Why verification is required:**\n' +
+            '• Prevents bot abuse in merit programs\n' +
+            '• Ensures one merit claim per real human\n' +
+            '• Protects legitimate traders\n\n' +
+            'Click the button below to get verified! 👇',
+            { 
+              parse_mode: 'Markdown',
+              reply_markup: keyboard 
+            }
+          );
+          return;
+        }
+
+        // User is verified, proceed with merit eligibility check
         // Show loading message
         this.bot.sendMessage(chatId, '🔍 Checking your merit eligibility...');
 
