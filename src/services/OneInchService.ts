@@ -911,7 +911,13 @@ export class OneInchService implements IOneInchService {
     while (attempts < maxAttempts) {
       try {
         // Check for ready-to-accept secret fills via proxy instead of SDK
-        const secretsToShare = await this.getReadyToAcceptSecretFillsViaProxy(orderHash);
+        let secretsToShare;
+        try {
+          secretsToShare = await this.getReadyToAcceptSecretFillsViaProxy(orderHash);
+        } catch (secretError) {
+          console.log('⚠️ Could not check for secret fills, continuing...');
+          secretsToShare = { fills: [] };
+        }
         
         if (secretsToShare.fills && secretsToShare.fills.length > 0) {
           console.log(`🔓 Found ${secretsToShare.fills.length} fills ready for secrets`);
@@ -927,21 +933,26 @@ export class OneInchService implements IOneInchService {
           }
         }
         
-        // Check order status via proxy
-        const { status } = await this.getOrderStatusViaProxy(orderHash);
+        // Check order status via proxy with enhanced handling
+        const statusResult = await this.getOrderStatusViaProxy(orderHash);
+        const status = statusResult.status;
         
         console.log(`📊 Order ${orderHash} status: ${status}`);
         
-        // Import OrderStatus enum
-        const { OrderStatus } = await import('@1inch/cross-chain-sdk');
+        // Check for completion statuses (more flexible matching)
+        const completedStatuses = ['executed', 'completed', 'filled', 'expired', 'cancelled', 'refunded'];
+        const isCompleted = completedStatuses.some(s => 
+          status.toLowerCase().includes(s.toLowerCase())
+        );
         
-        if (
-          status === OrderStatus.Executed || 
-          status === OrderStatus.Expired || 
-          status === OrderStatus.Refunded
-        ) {
+        if (isCompleted) {
           console.log('🏁 Order completed with status:', status);
           break;
+        }
+        
+        // Log progress every 10 attempts (50 seconds)
+        if (attempts % 10 === 0) {
+          console.log(`🕒 Secret sharing progress: ${attempts}/${maxAttempts} attempts, status: ${status}`);
         }
         
         // Wait 5 seconds before next check
@@ -957,6 +968,7 @@ export class OneInchService implements IOneInchService {
     
     if (attempts >= maxAttempts) {
       console.warn('⚠️ Secret sharing process timed out for order:', orderHash);
+      console.log('ℹ️ The order may still complete - check the 1inch dashboard for updates');
     }
   }
 
@@ -1014,42 +1026,68 @@ export class OneInchService implements IOneInchService {
    * Get order status via proxy - IMPROVED VERSION
    */
   private async getOrderStatusViaProxy(orderHash: string): Promise<any> {
-    try {
-      const proxyUrl = 'http://localhost:3013';
-      const apiUrl = `https://api.1inch.dev/fusion-plus/orders/v1.0/order/status/${orderHash}`;
-      const proxyParams = new URLSearchParams({
-        url: apiUrl
-      });
-      const fullProxyUrl = `${proxyUrl}?${proxyParams.toString()}`;
-
-      const headers = {
-        'accept': 'application/json',
-        'Authorization': `Bearer ${this.apiKey}`
-      };
-
-      const response = await axios.get(fullProxyUrl, { headers });
-      return response.data;
-      
-    } catch (error) {
-      console.error('❌ Error getting order status via proxy:', error);
-      
-      // Try alternative status endpoint
+    // Try multiple status endpoints in order of preference
+    const statusEndpoints = [
+      `https://api.1inch.dev/fusion-plus/orders/v1.0/order/status/${orderHash}`,
+      `https://api.1inch.dev/fusion-plus/orders/v1.0/order/${orderHash}`,
+      `https://api.1inch.dev/fusion-plus/orders/v1.0/orders/${orderHash}`,
+      `https://api.1inch.dev/fusion-plus/relayer/v1.0/order/${orderHash}/status`,
+      `https://api.1inch.dev/fusion-plus/relayer/v1.0/orders/${orderHash}`
+    ];
+  
+    for (const apiUrl of statusEndpoints) {
       try {
+        console.log(`🔍 Trying status endpoint: ${apiUrl}`);
+        
         const proxyUrl = 'http://localhost:3013';
-        const altApiUrl = `https://api.1inch.dev/fusion-plus/orders/v1.0/order/${orderHash}`;
         const proxyParams = new URLSearchParams({
-          url: altApiUrl
+          url: apiUrl
         });
         const fullProxyUrl = `${proxyUrl}?${proxyParams.toString()}`;
-
-        const altResponse = await axios.get(fullProxyUrl, { headers: { 'accept': 'application/json', 'Authorization': `Bearer ${this.apiKey}` } });
-        return { status: altResponse.data?.status || 'pending' };
+  
+        const headers = {
+          'accept': 'application/json',
+          'Authorization': `Bearer ${this.apiKey}`
+        };
+  
+        const response = await axios.get(fullProxyUrl, { headers });
         
-      } catch (altError) {
-        console.error('❌ Alternative status endpoint also failed:', altError);
-        return { status: 'pending' }; // Return pending instead of unknown
+        console.log(`✅ Status response from ${apiUrl}:`, response.data);
+        
+        // Extract status from various possible response formats
+        let status = 'pending';
+        
+        if (response.data) {
+          if (typeof response.data === 'string') {
+            status = response.data;
+          } else if (response.data.status) {
+            status = response.data.status;
+          } else if (response.data.state) {
+            status = response.data.state;
+          } else if (response.data.orderStatus) {
+            status = response.data.orderStatus;
+          } else if (response.data.order?.status) {
+            status = response.data.order.status;
+          } else if (response.data.data?.status) {
+            status = response.data.data.status;
+          } else {
+            // If we get a response but no clear status, log the structure
+            console.log('📋 Status response structure:', Object.keys(response.data));
+            status = 'submitted'; // Assume submitted if we get any response
+          }
+        }
+        
+        return { status, raw: response.data };
+        
+      } catch (error) {
+        console.log(`❌ Status endpoint ${apiUrl} failed:`, error.response?.status, error.response?.data);
+        continue; // Try next endpoint
       }
     }
+    
+    // If all endpoints fail, return pending
+    console.warn('⚠️ All status endpoints failed, returning pending');
+    return { status: 'pending' };
   }
 
   /**
