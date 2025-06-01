@@ -524,7 +524,9 @@ export class OneInchService implements IOneInchService {
       const { hash, quoteId, order } = await sdkWithProvider.createOrder(sdkQuote, orderParams);
       
       console.log('📋 Order created with hash:', hash);
-      console.log('📋 Order object:', JSON.stringify(order, null, 2));
+      // Handle BigInt serialization for logging
+      console.log('📋 Order object:', JSON.stringify(order, (key, value) => 
+        typeof value === 'bigint' ? value.toString() : value, 2));
 
       // Step 7: Submit the order manually through proxy instead of SDK
       console.log('📤 Submitting order to network via proxy...');
@@ -595,16 +597,21 @@ export class OneInchService implements IOneInchService {
     try {
       console.log('🔄 Submitting order via localhost proxy...');
       
+      // Convert BigInt values to strings for API submission
+      const serializableOrder = JSON.parse(JSON.stringify(order, (key, value) => 
+        typeof value === 'bigint' ? value.toString() : value));
+      
       // Prepare the order submission payload
       const submitPayload = {
-        order: order,
-        signature: order.signature || '0x', // Signature should be in the order object
+        order: serializableOrder,
+        signature: serializableOrder.signature || '0x', // Signature should be in the order object
         quoteId: quoteId,
-        extension: order.extension || '',
+        extension: serializableOrder.extension || '',
         srcChainId: srcChainId
       };
 
-      console.log('📤 Order submission payload:', JSON.stringify(submitPayload, null, 2));
+      console.log('📤 Order submission payload:', JSON.stringify(submitPayload, (key, value) => 
+        typeof value === 'bigint' ? value.toString() : value, 2));
 
       // Submit via proxy
       const proxyUrl = 'http://localhost:3013';
