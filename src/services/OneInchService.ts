@@ -451,20 +451,20 @@ export class OneInchService implements IOneInchService {
 
   /**
    * Place cross-chain Fusion+ order with proper signature generation
- */
-private async placeCrossChainOrder(
-  quoteParams: OneInchQuoteParams,
-  encryptedPrivateKey: string,
-  slippage: number = 1
-): Promise<OneInchOrderResult> {
+   */
+  private async placeCrossChainOrder(
+    quoteParams: OneInchQuoteParams,
+    encryptedPrivateKey: string,
+    slippage: number = 1
+  ): Promise<OneInchOrderResult> {
     console.log('🌉 Placing cross-chain Fusion+ order via SDK + Manual Submission');
 
-  try {
-    // Step 1: Decrypt the private key
-    const privateKey = this.walletService.decrypt(encryptedPrivateKey);
-    const wallet = new ethers.Wallet(privateKey);
-    
-    console.log(`📝 Using wallet address: ${wallet.address}`);
+    try {
+      // Step 1: Decrypt the private key
+      const privateKey = this.walletService.decrypt(encryptedPrivateKey);
+      const wallet = new ethers.Wallet(privateKey);
+      
+      console.log(`📝 Using wallet address: ${wallet.address}`);
 
       // Step 2: Create SDK instance with blockchain provider
       console.log('🔧 Creating SDK instance with blockchain provider...');
@@ -474,52 +474,52 @@ private async placeCrossChainOrder(
       console.log('🔍 Getting fresh quote for order placement via SDK...');
 
       const sdkQuote = await sdkWithProvider.getQuote({
-      srcChainId: quoteParams.srcChainId,
-      dstChainId: quoteParams.dstChainId,
-      srcTokenAddress: quoteParams.srcTokenAddress,
-      dstTokenAddress: quoteParams.dstTokenAddress,
-      amount: quoteParams.amount,
-      walletAddress: quoteParams.walletAddress,
-      enableEstimate: true
-    });
+        srcChainId: quoteParams.srcChainId,
+        dstChainId: quoteParams.dstChainId,
+        srcTokenAddress: quoteParams.srcTokenAddress,
+        dstTokenAddress: quoteParams.dstTokenAddress,
+        amount: quoteParams.amount,
+        walletAddress: quoteParams.walletAddress,
+        enableEstimate: true
+      });
 
-    console.log('✅ SDK Quote received, preparing order...');
+      console.log('✅ SDK Quote received, preparing order...');
 
-    // Step 4: Get preset information
-    const preset = sdkQuote.getPreset();
-    const secretsCount = preset.secretsCount || 1;
-    
-    console.log(`🔐 Generating ${secretsCount} secrets for hash lock...`);
-    
-    // Step 5: Generate secrets and create hash lock
-    const secrets = Array.from({ length: secretsCount }).map(() => this.getRandomBytes32());
-    
-    // Import HashLock and PresetEnum from the SDK
-    const { HashLock, PresetEnum } = await import('@1inch/cross-chain-sdk');
-    
-    // Create hash lock based on the number of secrets
-    let hashLock;
-    if (secretsCount === 1) {
-      hashLock = HashLock.forSingleFill(secrets[0]);
-    } else {
-      // For multiple fills, create merkle leaves
-      const merkleLeaves = HashLock.getMerkleLeaves(secrets);
-      hashLock = HashLock.forMultipleFills(merkleLeaves);
-    }
-    
-    // Create secret hashes
-    const secretHashes = secrets.map((secret) => HashLock.hashSecret(secret));
+      // Step 4: Get preset information
+      const preset = sdkQuote.getPreset();
+      const secretsCount = preset.secretsCount || 1;
+      
+      console.log(`🔐 Generating ${secretsCount} secrets for hash lock...`);
+      
+      // Step 5: Generate secrets and create hash lock
+      const secrets = Array.from({ length: secretsCount }).map(() => this.getRandomBytes32());
+      
+      // Import HashLock and PresetEnum from the SDK
+      const { HashLock, PresetEnum } = await import('@1inch/cross-chain-sdk');
+      
+      // Create hash lock based on the number of secrets
+      let hashLock;
+      if (secretsCount === 1) {
+        hashLock = HashLock.forSingleFill(secrets[0]);
+      } else {
+        // For multiple fills, create merkle leaves
+        const merkleLeaves = HashLock.getMerkleLeaves(secrets);
+        hashLock = HashLock.forMultipleFills(merkleLeaves);
+      }
+      
+      // Create secret hashes
+      const secretHashes = secrets.map((secret) => HashLock.hashSecret(secret));
 
-    console.log('🎯 Hash lock created, creating order...');
+      console.log('🎯 Hash lock created, creating order...');
 
       // Step 6: Create the order using the SDK
-    const orderParams = {
-      walletAddress: quoteParams.walletAddress,
-      hashLock: hashLock,
+      const orderParams = {
+        walletAddress: quoteParams.walletAddress,
+        hashLock: hashLock,
         preset: PresetEnum.fast,
-      source: 'sdk',
-      secretHashes: secretHashes
-    };
+        source: 'sdk',
+        secretHashes: secretHashes
+      };
 
       const { hash, quoteId, order } = await sdkWithProvider.createOrder(sdkQuote, orderParams);
     
@@ -553,153 +553,216 @@ private async placeCrossChainOrder(
       
       const orderSubmissionResult = await this.submitOrderViaProxy(
         signedOrder,
-      quoteId,
+        quoteId,
         secretHashes,
         quoteParams.srcChainId
-    );
+      );
     
       console.log('✅ Order submitted successfully via proxy!', { hash });
 
       // Step 9: Start the secret sharing process
       this.startSecretSharingProcess(hash, secrets, sdkWithProvider).catch(error => {
-      console.error('❌ Error in secret sharing process:', error);
-    });
+        console.error('❌ Error in secret sharing process:', error);
+      });
 
-    const result: OneInchOrderResult = {
-      orderId: hash,
-      status: 'submitted'
-    };
+      const result: OneInchOrderResult = {
+        orderId: hash,
+        status: 'submitted'
+      };
 
       // Store secrets as additional properties
-    (result as any).secrets = secrets;
-    (result as any).secretHashes = secretHashes.map(h => h.toString());
+      (result as any).secrets = secrets;
+      (result as any).secretHashes = secretHashes.map(h => h.toString());
 
-    return result;
+      return result;
 
-  } catch (error) {
-    console.error('❌ Error placing cross-chain order:', error);
-    
-    // Handle specific error types
-    if (error instanceof Error) {
-      if (error.message.includes('insufficient balance')) {
-        throw new Error('Insufficient balance for cross-chain swap. Please check your wallet balance.');
-      }
-      if (error.message.includes('insufficient allowance')) {
-        throw new Error('Insufficient token allowance. Please approve the token for the 1inch Limit Order Protocol contract.');
-      }
-      if (error.message.includes('token not supported')) {
-        throw new Error('Token not supported for cross-chain swaps on 1inch Fusion+.');
-      }
-      if (error.message.includes('chain not supported')) {
-        throw new Error('Chain combination not supported for cross-chain swaps.');
-      }
-      if (error.message.includes('amount too small')) {
-        throw new Error('Minimum swap amount not met. Try with a larger amount.');
-      }
+    } catch (error) {
+      console.error('❌ Error placing cross-chain order:', error);
+      
+      // Handle specific error types
+      if (error instanceof Error) {
+        if (error.message.includes('insufficient balance')) {
+          throw new Error('Insufficient balance for cross-chain swap. Please check your wallet balance.');
+        }
+        if (error.message.includes('insufficient allowance')) {
+          throw new Error('Insufficient token allowance. Please approve the token for the 1inch Limit Order Protocol contract.');
+        }
+        if (error.message.includes('token not supported')) {
+          throw new Error('Token not supported for cross-chain swaps on 1inch Fusion+.');
+        }
+        if (error.message.includes('chain not supported')) {
+          throw new Error('Chain combination not supported for cross-chain swaps.');
+        }
+        if (error.message.includes('amount too small')) {
+          throw new Error('Minimum swap amount not met. Try with a larger amount.');
+        }
         if (error.message.includes('blockchainProvider has not set')) {
           throw new Error('Blockchain provider configuration error. Unable to sign transactions.');
         }
+      }
+      
+      throw new Error(`Failed to place cross-chain order: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
-    
-    throw new Error(`Failed to place cross-chain order: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
-}
-  
-private async submitOrderViaProxy(
-  order: any,
-  quoteId: string,
-  secretHashes: any[],
-  srcChainId: number
-): Promise<any> {
-  try {
-    console.log('🔄 Submitting signed order via localhost proxy...');
-    
-    // The order object from SDK already has the correct structure
-    // We need to pass it as-is, not try to reformat it
-    const orderData = order.inner?.inner || order;
-    
-    // Extract the extension data properly - this is critical for cross-chain orders
-    const extension = this.extractCrossChainExtension(order);
-    
-    // Create the submission payload in the exact format the API expects
-    const submitPayload = {
-      order: orderData,
-      quoteId: quoteId,
-      secretHashes: secretHashes.map(h => h.toString()),
-      signature: order.signature,
-      extension: extension // This must include destination chain info
-    };
 
-    console.log('📤 Order submission payload:', JSON.stringify(submitPayload, (key, value) => 
-      typeof value === 'bigint' ? value.toString() : value, 2));
+  private async submitOrderViaProxy(
+    order: any,
+    quoteId: string,
+    secretHashes: any[],
+    srcChainId: number
+  ): Promise<any> {
+    try {
+      console.log('🔄 Submitting signed order via localhost proxy...');
+      
+      // Extract and properly serialize the order data
+      const orderData = this.serializeOrderForSubmission(order);
+      
+      // Extract the actual extension data from the order
+      const extension = this.extractAndSerializeExtension(order);
+      
+      // Create the submission payload
+      const submitPayload = {
+        order: orderData,
+        quoteId: quoteId,
+        secretHashes: secretHashes.map(h => h.toString()),
+        signature: order.signature,
+        extension: extension
+      };
 
-    // Submit via proxy
-    const proxyUrl = 'http://localhost:3013';
-    const submitApiUrl = 'https://api.1inch.dev/fusion-plus/relayer/v1.0/submit';
-    const url = `${proxyUrl}/?url=${encodeURIComponent(submitApiUrl)}`;
+      // Use custom serializer to handle BigInt values
+      const serializedPayload = this.serializeWithBigInt(submitPayload);
+      
+      console.log('📤 Serialized order submission payload:', serializedPayload);
 
-    const headers = {
-      'accept': 'application/json',
-      'content-type': 'application/json',
-      'Authorization': `Bearer ${this.apiKey}`
-    };
+      // Submit via proxy
+      const proxyUrl = 'http://localhost:3013';
+      const submitApiUrl = 'https://api.1inch.dev/fusion-plus/relayer/v1.0/submit';
+      const url = `${proxyUrl}/?url=${encodeURIComponent(submitApiUrl)}`;
 
-    const response = await axios.post(url, submitPayload, { headers });
-    
-    console.log('✅ Order submitted successfully via proxy:', response.data);
-    return response.data;
+      const headers = {
+        'accept': 'application/json',
+        'content-type': 'application/json',
+        'Authorization': `Bearer ${this.apiKey}`
+      };
 
-  } catch (error) {
-    console.error('❌ Error submitting order via proxy:', error);
-    
-    if (error && typeof error === 'object' && 'response' in error) {
-      const axiosError = error as any;
-      console.error('📋 Full error response:', axiosError.response?.data);
-      console.error('📋 Status:', axiosError.response?.status);
-      console.error('📋 Headers:', axiosError.response?.headers);
+      // Send the pre-serialized JSON string
+      const response = await axios.post(url, serializedPayload, { 
+        headers,
+        transformRequest: [(data) => data] // Prevent axios from re-serializing
+      });
+      
+      console.log('✅ Order submitted successfully via proxy:', response.data);
+      return response.data;
+
+    } catch (error) {
+      console.error('❌ Error submitting order via proxy:', error);
+      
+      if (error && typeof error === 'object' && 'response' in error) {
+        const axiosError = error as any;
+        console.error('📋 Full error response:', axiosError.response?.data);
+        console.error('📋 Status:', axiosError.response?.status);
+        console.error('📋 Headers:', axiosError.response?.headers);
+      }
+      
+      throw error;
     }
-    
-    throw error;
   }
-}
 
-/**
- * Extract cross-chain extension data from order
- */
-private extractCrossChainExtension(order: any): string {
-  try {
-    // For cross-chain orders, the extension contains destination chain info
-    // Try multiple possible locations
-    const extensionData = order.extension || 
-                         order.inner?.extension || 
-                         order.inner?.inner?.extension ||
-                         order.inner?.fusionExtension ||
-                         order.fusionExtension;
+  /**
+   * Serialize order data for submission, handling BigInt values
+   */
+  private serializeOrderForSubmission(order: any): any {
+    // Extract the inner order data
+    const innerOrder = order.inner?.inner || order.inner || order;
     
-    if (!extensionData || extensionData === '0x') {
-      console.warn('⚠️ No extension data found in order - this will fail for cross-chain');
+    // Create a clean order object with proper field names
+    const cleanOrder = {
+      salt: this.toBigIntString(innerOrder._salt || innerOrder.salt),
+      maker: innerOrder.maker?.val || innerOrder.maker,
+      receiver: innerOrder.receiver?.val || innerOrder.receiver || '0x0000000000000000000000000000000000000000',
+      makerAsset: innerOrder.makerAsset?.val || innerOrder.makerAsset,
+      takerAsset: innerOrder.takerAsset?.val || innerOrder.takerAsset,
+      makingAmount: this.toBigIntString(innerOrder.makingAmount),
+      takingAmount: this.toBigIntString(innerOrder.takingAmount),
+      makerTraits: this.toBigIntString(innerOrder.makerTraits?.value?.value || innerOrder.makerTraits?.value || innerOrder.makerTraits)
+    };
+    
+    return cleanOrder;
+  }
+
+  /**
+   * Extract and serialize extension data
+   */
+  private extractAndSerializeExtension(order: any): string {
+    try {
+      // The extension is likely in the order's extension field
+      const extensionObj = order.inner?.inner?.extension || order.inner?.extension || order.extension;
+      
+      if (!extensionObj) {
+        console.warn('⚠️ No extension found in order');
+        return '0x';
+      }
+      
+      // If it's already a hex string, return it
+      if (typeof extensionObj === 'string' && extensionObj.startsWith('0x')) {
+        return extensionObj;
+      }
+      
+      // If it's an Extension object, we need to encode it
+      if (extensionObj && typeof extensionObj === 'object') {
+        // The extension needs to be ABI encoded. For now, we'll concatenate the hex values
+        const parts = [
+          extensionObj.makerAssetSuffix || '0x',
+          extensionObj.takerAssetSuffix || '0x',
+          extensionObj.makingAmountData || '0x',
+          extensionObj.takingAmountData || '0x',
+          extensionObj.predicate || '0x',
+          extensionObj.makerPermit || '0x',
+          extensionObj.preInteraction || '0x',
+          extensionObj.postInteraction || '0x',
+          extensionObj.customData || '0x'
+        ];
+        
+        // Remove '0x' prefix from each part and concatenate
+        const encoded = '0x' + parts.map(p => p.slice(2)).join('');
+        console.log('📋 Encoded extension:', encoded);
+        return encoded;
+      }
+      
+      return '0x';
+    } catch (error) {
+      console.error('❌ Error extracting extension:', error);
       return '0x';
     }
-    
-    // If it's already a hex string, return it
-    if (typeof extensionData === 'string' && extensionData.startsWith('0x')) {
-      return extensionData;
-    }
-    
-    // If it's an object, it needs to be encoded
-    if (typeof extensionData === 'object') {
-      // This would need proper ABI encoding based on the extension structure
-      console.log('📋 Extension data object:', extensionData);
-      // For now, we'll need to implement proper encoding
-      return '0x'; // This will cause the order to fail
-    }
-    
-    return '0x';
-  } catch (error) {
-    console.error('❌ Error extracting extension:', error);
-    return '0x';
   }
-}
+
+  /**
+   * Convert BigInt to string
+   */
+  private toBigIntString(value: any): string {
+    if (typeof value === 'bigint') {
+      return value.toString();
+    }
+    if (value && typeof value === 'object' && 'toString' in value) {
+      return value.toString();
+    }
+    return String(value);
+  }
+
+  /**
+   * Custom JSON serializer that handles BigInt values
+   */
+  private serializeWithBigInt(obj: any): string {
+    return JSON.stringify(obj, (key, value) => {
+      if (typeof value === 'bigint') {
+        return value.toString();
+      }
+      if (value && typeof value === 'object' && 'value' in value && typeof value.value === 'bigint') {
+        return value.value.toString();
+      }
+      return value;
+    });
+  }
 
   /**
    * Sign the order using EIP-712 typed data signing - FIXED VERSION
@@ -713,10 +776,14 @@ private extractCrossChainExtension(order: any): string {
         console.log('✅ Using order.getTypedData() method');
         const typedData = order.getTypedData();
         
+        // Remove EIP712Domain from types to fix ethers v6 compatibility
+        const types = { ...typedData.types };
+        delete types.EIP712Domain;
+        
         // Sign using the SDK's typed data
         const signature = await wallet.signTypedData(
           typedData.domain,
-          typedData.types,
+          types,
           typedData.message
         );
         
@@ -784,20 +851,24 @@ private extractCrossChainExtension(order: any): string {
   }
 
   /**
-   * Alternative: Try to use the SDK's built-in signing if available
+   * Alternative: Try to use the SDK's built-in signing if available - IMPROVED
    */
   private async signOrderWithSDK(order: any, wallet: ethers.Wallet): Promise<string> {
     try {
-      // Check if the order has a sign method
+      // Check various methods that might exist
       if (typeof order.sign === 'function') {
         console.log('✅ Using order.sign() method');
         return await order.sign(wallet.privateKey);
       }
       
-      // Check if the order has a signTypedData method
       if (typeof order.signTypedData === 'function') {
         console.log('✅ Using order.signTypedData() method');
         return await order.signTypedData(wallet);
+      }
+      
+      if (typeof order.getSignature === 'function') {
+        console.log('✅ Using order.getSignature() method');
+        return await order.getSignature(wallet);
       }
       
       throw new Error('No built-in signing method available');
