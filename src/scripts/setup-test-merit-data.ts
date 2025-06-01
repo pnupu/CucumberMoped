@@ -8,20 +8,20 @@ dotenv.config();
 const prisma = new PrismaClient();
 
 async function setupTestMeritData() {
-  console.log('🔧 Setting up test merit data for antsa_e...');
+  console.log('🔧 Setting up test merit data for Antsa_E...');
   
   try {
     const meritEligibilityService = new MeritEligibilityService(prisma);
     
-    // Find user with username "antsa_e"
+    // Find user with username "Antsa_E"
     const user = await prisma.user.findFirst({
       where: {
-        username: 'antsa_e'
+        username: 'Antsa_E'
       }
     });
     
     if (!user) {
-      console.log('❌ User "antsa_e" not found. Please register first with /start command.');
+      console.log('❌ User "Antsa_E" not found. Please register first with /start command.');
       return;
     }
     
@@ -109,8 +109,8 @@ async function setupTestMeritData() {
     
     console.log(`📊 Created ${createdUsers} test users with trading volumes`);
     
-    // Check antsa_e's eligibility
-    console.log('\n🏆 Checking antsa_e eligibility...');
+    // Check Antsa_E's eligibility
+    console.log('\n🏆 Checking Antsa_E eligibility...');
     const eligibility = await meritEligibilityService.checkUserEligibility(user.telegramId);
     
     console.log(`✅ Eligible: ${eligibility.isEligible ? 'Yes' : 'No'}`);
