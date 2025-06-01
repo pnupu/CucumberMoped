@@ -159,28 +159,45 @@ class CucumberMopedPlugin {
 
     // Only add tools if we have the required services
     if (this.context.strategyService) {
-      tools.push(
-        // Portfolio Strategy Tools
-        new DynamicStructuredTool({
-          name: 'get_portfolio_allocation',
-          description: 'Calculate detailed AI-optimized portfolio allocation using Black-Litterman optimization. Use this for specific requests about "allocation calculations", "optimization strategy", "detailed portfolio analysis", or "Black-Litterman". NOT for general "my portfolio" questions.',
-          schema: z.object({
-            recalculate: z.boolean().optional().describe('Whether to force recalculation instead of using cached data')
-          }),
-          func: async ({ recalculate = false }) => {
-            try {
-              const { portfolio } = await this.context.strategyService.getPortfolioAllocation();
-              
-              const overview = this.context.strategyService.createIndexOverview(portfolio, recalculate);
-              const chart = this.context.strategyService.generateAllocationChart(portfolio);
-              
-              return `${overview}\n\n\`\`\`\n${chart}\n\`\`\``;
-            } catch (error) {
-              return `Error calculating portfolio allocation: ${error instanceof Error ? error.message : 'Unknown error'}`;
+      // Create custom Tool class for portfolio allocation to avoid schema issues
+      class PortfolioAllocationTool extends Tool {
+        constructor(context) {
+          super();
+          this.name = 'get_portfolio_allocation';
+          this.description = 'Calculate detailed AI-optimized portfolio allocation using Black-Litterman optimization. Use this for specific requests about "allocation calculations", "optimization strategy", "detailed portfolio analysis", or "Black-Litterman". NOT for general "my portfolio" questions.';
+          this.context = context;
+        }
+
+        async _call(input) {
+          try {
+            // Handle various input formats - LangChain might pass "None" as string
+            let parsedInput = { recalculate: false };
+            if (typeof input === 'string') {
+              try {
+                if (input !== 'None' && input !== 'none' && input !== '{}' && input !== '') {
+                  const parsed = JSON.parse(input);
+                  parsedInput = { recalculate: parsed.recalculate || false };
+                }
+              } catch (e) {
+                console.log(`🥒 [ALLOCATION TOOL] String input is not JSON, using defaults: "${input}"`);
+              }
+            } else if (typeof input === 'object' && input !== null) {
+              parsedInput = { recalculate: input.recalculate || false };
             }
-          },
-        })
-      );
+
+            const { portfolio } = await this.context.strategyService.getPortfolioAllocation();
+            
+            const overview = this.context.strategyService.createIndexOverview(portfolio, parsedInput.recalculate);
+            const chart = this.context.strategyService.generateAllocationChart(portfolio);
+            
+            return `${overview}\n\n\`\`\`\n${chart}\n\`\`\``;
+          } catch (error) {
+            return `Error calculating portfolio allocation: ${error instanceof Error ? error.message : 'Unknown error'}`;
+          }
+        }
+      }
+
+      tools.push(new PortfolioAllocationTool(this.context));
 
       if (this.context.hederaService) {
         tools.push(
@@ -301,107 +318,127 @@ class CucumberMopedPlugin {
           },
         }),
 
-        new DynamicStructuredTool({
-          name: 'get_hedera_testnet_info',
-          description: 'Get information about Hedera testnet connectivity and status',
-          schema: z.object({}),
-          func: async () => {
-            try {
-              const isConnected = await this.context.hederaService.testConnectivity();
-              
-              return `Hedera Testnet Status:
+        // Create class-based tool to avoid property issues
+        (() => {
+          class HederaTestnetInfoTool extends Tool {
+            constructor(context) {
+              super();
+              this.name = 'get_hedera_testnet_info';
+              this.description = 'Get information about Hedera testnet connectivity and status';
+              this.context = context;
+            }
+
+            async _call(input) {
+              try {
+                const isConnected = await this.context.hederaService.testConnectivity();
+                
+                return `Hedera Testnet Status:
 • Connectivity: ${isConnected ? 'Connected ✅' : 'Disconnected ❌'}
 • Network: Hedera Testnet
 • Mirror Node: https://testnet.mirrornode.hedera.com
 • Current Operator: Available
 
 You can create topics, submit messages, and query data on the Hedera testnet.`;
-            } catch (error) {
-              return `Error checking Hedera status: ${error instanceof Error ? error.message : 'Unknown error'}`;
+              } catch (error) {
+                return `Error checking Hedera status: ${error instanceof Error ? error.message : 'Unknown error'}`;
+              }
             }
-          },
-        })
+          }
+          return new HederaTestnetInfoTool(this.context);
+        })()
       );
     }
 
     // User Management Tools
     if (this.context.db) {
-      tools.push(
-        new DynamicStructuredTool({
-          name: 'get_user_info',
-          description: 'Get information about the current Telegram user from the database',
-          schema: z.object({}),
-          func: async () => {
-            try {
-              const userContext = this.context.userContext;
-              if (!userContext || !userContext.userId) {
-                return `Error: No user context available. Please make sure you're logged in.`;
-              }
+      // Create custom Tool classes to avoid schema validation issues
+      class UserInfoTool extends Tool {
+        constructor(context) {
+          super();
+          this.name = 'get_user_info';
+          this.description = 'Get information about the current Telegram user from the database';
+          this.context = context;
+        }
 
-              const userId = userContext.userId;
-              const user = await this.context.db.getUser(userId);
-              if (!user) {
-                return `User ${userId} not found in database`;
-              }
+        async _call(input) {
+          try {
+            const userContext = this.context.userContext;
+            if (!userContext || !userContext.userId) {
+              return `Error: No user context available. Please make sure you're logged in.`;
+            }
 
-              return `User Information:
+            const userId = userContext.userId;
+            const user = await this.context.db.getUser(userId);
+            if (!user) {
+              return `User ${userId} not found in database`;
+            }
+
+            return `User Information:
 • User ID: ${user.telegramId}
 • Username: ${user.username || 'Not set'}
 • Wallet Address: ${user.walletAddress}
 • World ID Verified: ${user.worldIdVerified ? 'Yes' : 'No'}
 • Created: ${user.createdAt.toISOString()}
 • Last Updated: ${user.updatedAt.toISOString()}`;
-            } catch (error) {
-              return `Error retrieving user info: ${error instanceof Error ? error.message : 'Unknown error'}`;
+          } catch (error) {
+            return `Error retrieving user info: ${error instanceof Error ? error.message : 'Unknown error'}`;
+          }
+        }
+      }
+
+      class MeritEligibilityTool extends Tool {
+        constructor(context) {
+          super();
+          this.name = 'check_user_merit_eligibility';
+          this.description = 'Check if the current user is eligible for merit distribution';
+          this.context = context;
+        }
+
+        async _call(input) {
+          try {
+            const userContext = this.context.userContext;
+            if (!userContext || !userContext.userId) {
+              return `Error: No user context available. Please make sure you're logged in.`;
             }
-          },
-        }),
 
-        new DynamicStructuredTool({
-          name: 'check_user_merit_eligibility',
-          description: 'Check if the current user is eligible for merit distribution',
-          schema: z.object({}),
-          func: async () => {
-            try {
-              const userContext = this.context.userContext;
-              if (!userContext || !userContext.userId) {
-                return `Error: No user context available. Please make sure you're logged in.`;
-              }
+            const userId = userContext.userId;
+            const user = await this.context.db.getUser(userId);
+            if (!user) {
+              return `User ${userId} not found`;
+            }
 
-              const userId = userContext.userId;
-              const user = await this.context.db.getUser(userId);
-              if (!user) {
-                return `User ${userId} not found`;
-              }
+            // Simple eligibility check - in production this would use MeritEligibilityService
+            const balances = await this.context.db.getTokenBalances(userId);
+            const hasActivity = balances.length > 0;
 
-              // Simple eligibility check - in production this would use MeritEligibilityService
-              const balances = await this.context.db.getTokenBalances(userId);
-              const hasActivity = balances.length > 0;
-
-              return `Merit Eligibility for User ${userId}:
+            return `Merit Eligibility for User ${userId}:
 • World ID Verified: ${user.worldIdVerified ? 'Yes ✅' : 'No ❌'}
 • Has Trading Activity: ${hasActivity ? 'Yes ✅' : 'No ❌'}
 • Eligible: ${user.worldIdVerified && hasActivity ? 'Yes ✅' : 'No ❌'}
 
 Note: Full eligibility checking requires the merit service to be active.`;
-            } catch (error) {
-              return `Error checking eligibility: ${error instanceof Error ? error.message : 'Unknown error'}`;
-            }
-          },
-        })
+          } catch (error) {
+            return `Error checking eligibility: ${error instanceof Error ? error.message : 'Unknown error'}`;
+          }
+        }
+      }
+
+      tools.push(
+        new UserInfoTool(this.context),
+        new MeritEligibilityTool(this.context)
       );
     }
 
-    // General Information Tools
-    tools.push(
-      new DynamicStructuredTool({
-        name: 'get_cucumbermoped_info',
-        description: 'Get general information about the CucumberMoped trading bot',
-        schema: z.object({}),
-        func: async () => {
-          const toolNames = tools.map(t => t.name).join(', ');
-          
-          return `🥒 **CucumberMoped Trading Bot**
+    // General Information Tools - Use custom Tool class
+    class CucumberInfoTool extends Tool {
+      constructor() {
+        super();
+        this.name = 'get_cucumbermoped_info';
+        this.description = 'Get general information about the CucumberMoped trading bot';
+      }
+
+      async _call(input) {
+        return `🥒 **CucumberMoped Trading Bot**
 
 **What is CucumberMoped?**
 A Telegram trading bot that combines:
@@ -414,9 +451,6 @@ A Telegram trading bot that combines:
 **AI Agent Capabilities:**
 The AI agent can help you with portfolio analysis, Hedera operations, user management, and more.
 
-**Available Custom Tools:**
-${toolNames}
-
 **Key Features:**
 • Trade tokens across Ethereum, Base, Arbitrum, and Polygon
 • Get AI-optimized portfolio allocations
@@ -424,11 +458,24 @@ ${toolNames}
 • Merit-based reward distribution for verified traders
 
 Ask me anything about portfolio management, Hedera operations, or trading!`;
-        },
-      })
-    );
+      }
+    }
+
+    tools.push(new CucumberInfoTool());
 
     console.log(`🥒 CucumberMoped Plugin loaded ${tools.length} tools`);
+    
+    // Validate all tools have required properties
+    for (let i = 0; i < tools.length; i++) {
+      const tool = tools[i];
+      if (!tool.name || typeof tool.name !== 'string') {
+        console.error(`🥒 [PLUGIN] Tool ${i} missing or invalid name:`, tool.name);
+      }
+      if (!tool.description || typeof tool.description !== 'string') {
+        console.error(`🥒 [PLUGIN] Tool ${i} missing or invalid description:`, tool.description);
+      }
+    }
+    
     return tools;
   }
 }
