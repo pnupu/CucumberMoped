@@ -1463,7 +1463,7 @@ Ready to verify? 🚀`;
 /orders - Check active/recent orders
 /status [order_id] - Check specific order status
 
-**🎯 Limit Orders (NEW!):**
+**🎯 Limit Orders:**
 /limitbuy [amount] [token] - Create limit buy order at Pyth EMA price
 /limitsell [amount] [token] - Create limit sell order at Pyth EMA price
 /limitorders - View your active limit orders
