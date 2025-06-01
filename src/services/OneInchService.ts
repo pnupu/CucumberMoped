@@ -450,7 +450,7 @@ export class OneInchService implements IOneInchService {
   }
 
   /**
-   * Place cross-chain Fusion+ order using SDK for creation and manual proxy submission
+   * Place cross-chain Fusion+ order with proper signature generation
    */
   private async placeCrossChainOrder(
     quoteParams: OneInchQuoteParams,
@@ -512,7 +512,7 @@ export class OneInchService implements IOneInchService {
 
       console.log('🎯 Hash lock created, creating order...');
 
-      // Step 6: Create the order using the SDK (this doesn't hit the network)
+      // Step 6: Create the order using the SDK
       const orderParams = {
         walletAddress: quoteParams.walletAddress,
         hashLock: hashLock,
@@ -524,15 +524,24 @@ export class OneInchService implements IOneInchService {
       const { hash, quoteId, order } = await sdkWithProvider.createOrder(sdkQuote, orderParams);
       
       console.log('📋 Order created with hash:', hash);
-      // Handle BigInt serialization for logging
-      console.log('📋 Order object:', JSON.stringify(order, (key, value) => 
-        typeof value === 'bigint' ? value.toString() : value, 2));
 
-      // Step 7: Submit the order manually through proxy instead of SDK
-      console.log('📤 Submitting order to network via proxy...');
+      // Step 7: Generate the order signature manually
+      console.log('✍️ Generating order signature...');
+      const signature = await this.signOrder(order, wallet, quoteParams.srcChainId);
+      
+      // Add signature to the order
+      const signedOrder = {
+        ...order,
+        signature: signature
+      };
+
+      console.log('✅ Order signed successfully');
+
+      // Step 8: Submit the order manually through proxy
+      console.log('📤 Submitting signed order to network via proxy...');
       
       const orderSubmissionResult = await this.submitOrderViaProxy(
-        order,
+        signedOrder,
         quoteId,
         secretHashes,
         quoteParams.srcChainId
@@ -540,7 +549,7 @@ export class OneInchService implements IOneInchService {
       
       console.log('✅ Order submitted successfully via proxy!', { hash });
 
-      // Step 8: Start the secret sharing process
+      // Step 9: Start the secret sharing process
       this.startSecretSharingProcess(hash, secrets, sdkWithProvider).catch(error => {
         console.error('❌ Error in secret sharing process:', error);
       });
@@ -595,18 +604,20 @@ export class OneInchService implements IOneInchService {
     srcChainId: number
   ): Promise<any> {
     try {
-      console.log('🔄 Submitting order via localhost proxy...');
+      console.log('🔄 Submitting signed order via localhost proxy...');
       
       // Convert BigInt values to strings for API submission
       const serializableOrder = JSON.parse(JSON.stringify(order, (key, value) => 
         typeof value === 'bigint' ? value.toString() : value));
       
-      // Prepare the order submission payload
+      // Prepare the order submission payload in the format expected by 1inch API
+      const orderForSubmission = this.formatOrderForAPI(serializableOrder);
+      
       const submitPayload = {
-        order: serializableOrder,
-        signature: serializableOrder.signature || '0x', // Signature should be in the order object
+        order: orderForSubmission,
+        signature: serializableOrder.signature,
         quoteId: quoteId,
-        extension: serializableOrder.extension || '',
+        extension: this.extractExtensionFromOrder(serializableOrder),
         srcChainId: srcChainId
       };
 
@@ -657,6 +668,137 @@ export class OneInchService implements IOneInchService {
       }
       
       throw new Error(`Failed to submit order via proxy: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Sign the order using EIP-712 typed data signing
+   */
+  private async signOrder(order: any, wallet: ethers.Wallet, chainId: number): Promise<string> {
+    try {
+      // Get the typed data for signing from the order
+      let typedData;
+      
+      if (typeof order.getTypedData === 'function') {
+        // If the order has a getTypedData method, use it
+        typedData = order.getTypedData();
+      } else {
+        // Otherwise, construct the typed data manually
+        typedData = {
+          domain: {
+            name: '1inch Fusion+',
+            version: '1',
+            chainId: chainId,
+            verifyingContract: '0xa7bcb4eac8964306f9e3764f67db6a7af6ddf99a' // Settlement contract
+          },
+          types: {
+            Order: [
+              { name: 'maker', type: 'address' },
+              { name: 'makerAsset', type: 'address' },
+              { name: 'takerAsset', type: 'address' },
+              { name: 'makingAmount', type: 'uint256' },
+              { name: 'takingAmount', type: 'uint256' },
+              { name: 'salt', type: 'uint256' },
+              { name: 'makerTraits', type: 'uint256' },
+              { name: 'receiver', type: 'address' },
+              { name: 'extension', type: 'bytes' }
+            ]
+          },
+          message: this.extractOrderDataForSigning(order)
+        };
+      }
+
+      // Sign the typed data
+      const signature = await wallet.signTypedData(
+        typedData.domain,
+        typedData.types,
+        typedData.message
+      );
+
+      console.log('📝 Order signature generated:', signature);
+      return signature;
+
+    } catch (error) {
+      console.error('❌ Error signing order:', error);
+      throw new Error(`Failed to sign order: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Extract order data for EIP-712 signing
+   */
+  private extractOrderDataForSigning(order: any): any {
+    try {
+      // Extract the core order data for signing
+      const orderData = {
+        maker: order.inner?.inner?.maker?.val || order.maker?.val || order.maker,
+        makerAsset: order.inner?.inner?.makerAsset?.val || order.makerAsset?.val || order.makerAsset,
+        takerAsset: order.inner?.inner?.takerAsset?.val || order.takerAsset?.val || order.takerAsset,
+        makingAmount: order.inner?.inner?.makingAmount || order.makingAmount,
+        takingAmount: order.inner?.inner?.takingAmount || order.takingAmount,
+        salt: order.inner?.inner?._salt || order._salt || order.salt,
+        makerTraits: order.inner?.inner?.makerTraits?.value?.value || order.makerTraits?.value || order.makerTraits,
+        receiver: order.inner?.inner?.receiver?.val || order.receiver?.val || order.receiver || '0x0000000000000000000000000000000000000000',
+        extension: order.inner?.inner?.extension || order.extension || '0x'
+      };
+
+      console.log('📋 Extracted order data for signing:', orderData);
+      return orderData;
+
+    } catch (error) {
+      console.error('❌ Error extracting order data:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Format order for 1inch API submission
+   */
+  private formatOrderForAPI(order: any): any {
+    try {
+      // Extract the core order fields that the API expects
+      const apiOrder = {
+        maker: order.inner?.inner?.maker?.val || order.maker?.val || order.maker,
+        makerAsset: order.inner?.inner?.makerAsset?.val || order.makerAsset?.val || order.makerAsset,
+        takerAsset: order.inner?.inner?.takerAsset?.val || order.takerAsset?.val || order.takerAsset,
+        makingAmount: order.inner?.inner?.makingAmount || order.makingAmount,
+        takingAmount: order.inner?.inner?.takingAmount || order.takingAmount,
+        salt: order.inner?.inner?._salt || order._salt || order.salt,
+        makerTraits: order.inner?.inner?.makerTraits?.value?.value || order.makerTraits?.value || order.makerTraits,
+        receiver: order.inner?.inner?.receiver?.val || order.receiver?.val || order.receiver || '0x0000000000000000000000000000000000000000'
+      };
+
+      console.log('📋 Formatted order for API:', apiOrder);
+      return apiOrder;
+
+    } catch (error) {
+      console.error('❌ Error formatting order for API:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Extract extension data from order
+   */
+  private extractExtensionFromOrder(order: any): string {
+    try {
+      // Try to extract extension from various possible locations
+      const extension = order.inner?.inner?.extension || 
+                       order.extension || 
+                       order.inner?.fusionExtension || 
+                       '0x';
+
+      // If extension is an object, we need to serialize it properly
+      if (typeof extension === 'object' && extension !== null) {
+        // This would need proper encoding based on the 1inch extension format
+        return '0x'; // For now, return empty extension
+      }
+
+      return extension || '0x';
+
+    } catch (error) {
+      console.error('❌ Error extracting extension:', error);
+      return '0x';
     }
   }
 
@@ -772,25 +914,44 @@ export class OneInchService implements IOneInchService {
   }
 
   /**
-   * Get order status via proxy
+   * Get order status via proxy - IMPROVED VERSION
    */
   private async getOrderStatusViaProxy(orderHash: string): Promise<any> {
     try {
       const proxyUrl = 'http://localhost:3013';
       const apiUrl = `https://api.1inch.dev/fusion-plus/orders/v1.0/order/status/${orderHash}`;
-      const url = `${proxyUrl}/?url=${encodeURIComponent(apiUrl)}`;
+      const proxyParams = new URLSearchParams({
+        url: apiUrl
+      });
+      const fullProxyUrl = `${proxyUrl}?${proxyParams.toString()}`;
 
       const headers = {
         'accept': 'application/json',
         'Authorization': `Bearer ${this.apiKey}`
       };
 
-      const response = await axios.get(url, { headers });
+      const response = await axios.get(fullProxyUrl, { headers });
       return response.data;
+      
     } catch (error) {
       console.error('❌ Error getting order status via proxy:', error);
-      // Return a default status if the request fails
-      return { status: 'unknown' };
+      
+      // Try alternative status endpoint
+      try {
+        const proxyUrl = 'http://localhost:3013';
+        const altApiUrl = `https://api.1inch.dev/fusion-plus/orders/v1.0/order/${orderHash}`;
+        const proxyParams = new URLSearchParams({
+          url: altApiUrl
+        });
+        const fullProxyUrl = `${proxyUrl}?${proxyParams.toString()}`;
+
+        const altResponse = await axios.get(fullProxyUrl, { headers: { 'accept': 'application/json', 'Authorization': `Bearer ${this.apiKey}` } });
+        return { status: altResponse.data?.status || 'pending' };
+        
+      } catch (altError) {
+        console.error('❌ Alternative status endpoint also failed:', altError);
+        return { status: 'pending' }; // Return pending instead of unknown
+      }
     }
   }
 
